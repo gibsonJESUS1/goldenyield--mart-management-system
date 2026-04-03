@@ -44,6 +44,26 @@ type ProductPayload = {
   saleUnits: SaleUnitInput[];
 };
 
+const initialForm: ProductPayload = {
+  name: "",
+  ownerId: "",
+  categoryId: "",
+  unitId: "",
+  stock: 0,
+  lowStock: 0,
+  active: true,
+  saleUnits: [
+    {
+      unitId: "",
+      quantityInBaseUnit: 1,
+      sellingPrice: 0,
+      isDefault: true,
+      active: true,
+      priceRules: [],
+    },
+  ],
+};
+
 export default function AddProductForm() {
   const router = useRouter();
 
@@ -51,25 +71,7 @@ export default function AddProductForm() {
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [units, setUnits] = useState<UnitOption[]>([]);
 
-  const [form, setForm] = useState<ProductPayload>({
-    name: "",
-    ownerId: "",
-    categoryId: "",
-    unitId: "",
-    stock: 0,
-    lowStock: 0,
-    active: true,
-    saleUnits: [
-      {
-        unitId: "",
-        quantityInBaseUnit: 1,
-        sellingPrice: 0,
-        isDefault: true,
-        active: true,
-        priceRules: [],
-      },
-    ],
-  });
+  const [form, setForm] = useState<ProductPayload>(initialForm);
 
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -183,9 +185,9 @@ export default function AddProductForm() {
 
       try {
         const [ownersRes, categoriesRes, unitsRes] = await Promise.all([
-          fetch("/api/owners"),
-          fetch("/api/categories"),
-          fetch("/api/units"),
+          fetch("/api/owners", { cache: "no-store" }),
+          fetch("/api/categories", { cache: "no-store" }),
+          fetch("/api/units", { cache: "no-store" }),
         ]);
 
         if (!ownersRes.ok || !categoriesRes.ok || !unitsRes.ok) {
@@ -247,28 +249,12 @@ export default function AddProductForm() {
         throw new Error("Failed to create product");
       }
 
-      setOpen(false);
-      setForm({
-        name: "",
-        ownerId: "",
-        categoryId: "",
-        unitId: "",
-        stock: 0,
-        lowStock: 0,
-        active: true,
-        saleUnits: [
-          {
-            unitId: "",
-            quantityInBaseUnit: 1,
-            sellingPrice: 0,
-            isDefault: true,
-            active: true,
-            priceRules: [],
-          },
-        ],
-      });
-
       router.refresh();
+
+      setTimeout(() => {
+        setOpen(false);
+        setForm(initialForm);
+      }, 100);
     } catch (error) {
       console.error(error);
       alert("Failed to save product");
@@ -289,7 +275,7 @@ export default function AddProductForm() {
       {open && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/40 p-4">
           <div className="mx-auto w-full max-w-5xl rounded-2xl bg-white p-6 shadow-xl">
-            <div className="mb-6 flex items-start justify-between">
+            <div className="mb-6 flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold text-slate-900">Add Product</h2>
                 <p className="mt-1 text-sm text-slate-500">
@@ -386,16 +372,20 @@ export default function AddProductForm() {
                       min="0"
                       className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
                       value={form.lowStock}
-                      onChange={(e) => updateField("lowStock", Number(e.target.value))}
+                      onChange={(e) =>
+                        updateField("lowStock", Number(e.target.value))
+                      }
                       required
                     />
                   </Field>
                 </div>
 
                 <div className="rounded-2xl border border-slate-200 p-4">
-                  <div className="mb-4 flex items-center justify-between">
+                  <div className="mb-4 flex items-center justify-between gap-4">
                     <div>
-                      <h3 className="text-lg font-bold text-slate-900">Selling Units</h3>
+                      <h3 className="text-lg font-bold text-slate-900">
+                        Selling Units
+                      </h3>
                       <p className="text-sm text-slate-500">
                         Add how this product is sold, including promo price rules.
                       </p>
@@ -412,10 +402,7 @@ export default function AddProductForm() {
 
                   <div className="space-y-4">
                     {form.saleUnits.map((saleUnit, index) => (
-                      <div
-                        key={index}
-                        className="rounded-2xl bg-slate-50 p-4"
-                      >
+                      <div key={index} className="rounded-2xl bg-slate-50 p-4">
                         <div className="grid gap-4 md:grid-cols-4">
                           <Field label="Unit">
                             <select
@@ -475,7 +462,11 @@ export default function AddProductForm() {
                                 type="checkbox"
                                 checked={saleUnit.isDefault}
                                 onChange={(e) =>
-                                  updateSaleUnit(index, "isDefault", e.target.checked)
+                                  updateSaleUnit(
+                                    index,
+                                    "isDefault",
+                                    e.target.checked
+                                  )
                                 }
                               />
                               Default
@@ -494,7 +485,7 @@ export default function AddProductForm() {
                         </div>
 
                         <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-                          <div className="mb-3 flex items-center justify-between">
+                          <div className="mb-3 flex items-center justify-between gap-4">
                             <div>
                               <p className="text-sm font-semibold text-slate-800">
                                 Quantity Price Rules
@@ -515,9 +506,7 @@ export default function AddProductForm() {
 
                           <div className="space-y-3">
                             {saleUnit.priceRules.length === 0 ? (
-                              <p className="text-xs text-slate-500">
-                                No rules yet.
-                              </p>
+                              <p className="text-xs text-slate-500">No rules yet.</p>
                             ) : (
                               saleUnit.priceRules.map((rule, ruleIndex) => (
                                 <div
@@ -610,7 +599,9 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm font-medium text-slate-700">{label}</span>
+      <span className="mb-2 block text-sm font-medium text-slate-700">
+        {label}
+      </span>
       {children}
     </label>
   );

@@ -30,7 +30,7 @@ function StatusBadge({ isActive }: { isActive?: boolean }) {
     </span>
   );
 }
-
+export const dynamic = "force-dynamic";
 export default function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);

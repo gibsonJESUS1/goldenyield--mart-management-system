@@ -34,6 +34,7 @@ type Product = {
     }[];
   }[];
 };
+export const dynamic = "force-dynamic";
 
 async function getProductsForPage(): Promise<Product[]> {
   const products = await getProducts();

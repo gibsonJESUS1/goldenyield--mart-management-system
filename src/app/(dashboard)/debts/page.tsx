@@ -20,7 +20,7 @@ type DebtRecord = {
 };
 
 type AdjustmentMode = "increase" | "decrease";
-
+export const dynamic = "force-dynamic";
 export default function DebtsPage() {
   const [debts, setDebts] = useState<DebtRecord[]>([]);
   const [loading, setLoading] = useState(true);

@@ -70,7 +70,7 @@ function getDateRange(range: string | undefined) {
 
   return {};
 }
-
+export const dynamic = "force-dynamic";
 async function getDashboardView(range: string | undefined) {
   const filters = getDateRange(range);
   const { owners, products, sales, debts } = await getDashboardData(filters);

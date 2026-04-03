@@ -55,7 +55,7 @@ function rangeLabel(range: string | undefined) {
   if (range === "month") return "This month";
   return "Today";
 }
-
+export const dynamic = "force-dynamic";
 async function getReportsView(range: string | undefined) {
   const filters = getDateRange(range);
   const { owners, products, sales, debts } = await getDashboardData(filters);

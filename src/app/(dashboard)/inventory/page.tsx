@@ -41,7 +41,7 @@ function getStockText(stock: number, lowStock: number) {
 
   return <span className="font-semibold text-emerald-600">{stock}</span>;
 }
-
+export const dynamic = "force-dynamic";
 export default function InventoryPage() {
   const items = useAppStore((state) => state.products);
   const restockHistory = useAppStore((state) => state.restockHistory);

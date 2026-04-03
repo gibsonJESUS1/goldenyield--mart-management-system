@@ -96,7 +96,7 @@ function calculateBestFitTotal(
 
   return total;
 }
-
+export const dynamic = "force-dynamic";
 export default function SalesPage() {
   const [products, setProducts] = useState<SaleProduct[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);

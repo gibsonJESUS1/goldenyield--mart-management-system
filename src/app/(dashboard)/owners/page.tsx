@@ -8,7 +8,7 @@ type Owner = {
   role?: string | null;
   isActive?: boolean;
 };
-
+export const dynamic = "force-dynamic";
 export default function OwnersPage() {
   const [owners, setOwners] = useState<Owner[]>([]);
   const [loading, setLoading] = useState(true);

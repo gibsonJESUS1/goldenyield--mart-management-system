@@ -8,7 +8,7 @@ type Unit = {
   symbol?: string | null;
   isActive?: boolean;
 };
-
+export const dynamic = "force-dynamic";
 export default function UnitsPage() {
   const [units, setUnits] = useState<Unit[]>([]);
   const [loading, setLoading] = useState(true);
