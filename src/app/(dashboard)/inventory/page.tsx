@@ -1,10 +1,20 @@
-"use client";
-
-import { useMemo, useState } from "react";
 import DataTable from "@/components/ui/data-table";
 import SummaryCard from "@/components/shared/summary-card";
-import RestockForm from "@/features/inventory/components/restock-form";
-import { useAppStore } from "@/store/app-store";
+import RestockProductButton from "@/features/products/components/restock-product-button";
+import { getProducts } from "@/lib/db/product";
+
+export const dynamic = "force-dynamic";
+
+type InventoryItem = {
+  id: string;
+  name: string;
+  category: string;
+  ownerName: string;
+  unit: string;
+  stock: number;
+  lowStock: number;
+  price: number;
+};
 
 function getStockBadge(stock: number, lowStock: number) {
   if (stock === 0) {
@@ -41,20 +51,29 @@ function getStockText(stock: number, lowStock: number) {
 
   return <span className="font-semibold text-emerald-600">{stock}</span>;
 }
-export const dynamic = "force-dynamic";
-export default function InventoryPage() {
-  const items = useAppStore((state) => state.products);
-  const restockHistory = useAppStore((state) => state.restockHistory);
-  const restockProduct = useAppStore((state) => state.restockProduct);
 
-  const [search, setSearch] = useState("");
-  const [restockingItemId, setRestockingItemId] = useState<string | null>(null);
+async function getInventoryItems(): Promise<InventoryItem[]> {
+  const products = await getProducts();
 
-  const filteredItems = useMemo(() => {
-    return items.filter((item) =>
-      item.name.toLowerCase().includes(search.toLowerCase())
-    );
-  }, [items, search]);
+  return products.map((product) => {
+    const defaultSaleUnit =
+      product.saleUnits.find((unit) => unit.isDefault) ?? product.saleUnits[0];
+
+    return {
+      id: product.id,
+      name: product.name,
+      category: product.category.name,
+      ownerName: product.owner.name,
+      unit: product.unit.name,
+      stock: product.stock,
+      lowStock: product.lowStock,
+      price: defaultSaleUnit ? Number(defaultSaleUnit.sellingPrice) : 0,
+    };
+  });
+}
+
+export default async function InventoryPage() {
+  const items = await getInventoryItems();
 
   const totalItems = items.length;
   const lowStockItems = items.filter(
@@ -62,9 +81,6 @@ export default function InventoryPage() {
   ).length;
   const outOfStockItems = items.filter((item) => item.stock === 0).length;
   const stockValue = items.reduce((sum, item) => sum + item.stock * item.price, 0);
-
-  const restockingItem =
-    items.find((item) => item.id === restockingItemId) ?? null;
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -87,30 +103,14 @@ export default function InventoryPage() {
         />
       </section>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="w-full">
-          <input
-            className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm outline-none focus:border-emerald-500 sm:max-w-md"
-            placeholder="Search inventory by product name..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-
-        <p className="text-sm text-slate-500">
-          {filteredItems.length} item{filteredItems.length === 1 ? "" : "s"} found
-        </p>
-      </div>
-
-      {filteredItems.length === 0 ? (
+      {items.length === 0 ? (
         <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-400 shadow-sm sm:p-10">
           No inventory items found.
         </div>
       ) : (
         <>
-          {/* Mobile cards */}
           <div className="grid grid-cols-1 gap-4 md:hidden">
-            {filteredItems.map((item) => (
+            {items.map((item) => (
               <div
                 key={item.id}
                 className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
@@ -145,28 +145,27 @@ export default function InventoryPage() {
                       ₦{(item.stock * item.price).toLocaleString()}
                     </p>
                     <p>
-                      <span className="font-medium text-slate-800">Low Stock Threshold:</span>{" "}
+                      <span className="font-medium text-slate-800">
+                        Low Stock Threshold:
+                      </span>{" "}
                       {item.lowStock}
                     </p>
                   </div>
 
                   <div className="pt-1">
-                    <button
-                      onClick={() => setRestockingItemId(item.id)}
-                      className="w-full rounded-xl border border-emerald-200 px-4 py-2.5 text-sm font-medium text-emerald-700 hover:bg-emerald-50"
-                    >
-                      Restock
-                    </button>
+                    <RestockProductButton
+                      productId={item.id}
+                      productName={item.name}
+                    />
                   </div>
                 </div>
               </div>
             ))}
           </div>
 
-          {/* Tablet/Desktop table */}
           <div className="hidden md:block">
             <DataTable
-              data={filteredItems}
+              data={items}
               columns={[
                 { header: "Name", accessor: "name" },
                 { header: "Category", accessor: "category" },
@@ -200,12 +199,10 @@ export default function InventoryPage() {
                   header: "Actions",
                   accessor: "id",
                   render: (row) => (
-                    <button
-                      onClick={() => setRestockingItemId(row.id)}
-                      className="text-sm font-medium text-emerald-600 hover:underline"
-                    >
-                      Restock
-                    </button>
+                    <RestockProductButton
+                      productId={row.id}
+                      productName={row.name}
+                    />
                   ),
                 },
               ]}
@@ -213,65 +210,6 @@ export default function InventoryPage() {
           </div>
         </>
       )}
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-        <div className="mb-4">
-          <h2 className="text-lg font-bold text-slate-900">
-            Recent Restock Activity
-          </h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Latest inventory updates from the shared store.
-          </p>
-        </div>
-
-        <div className="space-y-3">
-          {restockHistory.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-sm text-slate-500 sm:p-6">
-              No restock activity yet.
-            </div>
-          ) : (
-            restockHistory.map((record) => (
-              <div key={record.id} className="rounded-2xl bg-slate-50 p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <p className="break-words font-semibold text-slate-900">
-                      {record.productName}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {record.createdAt}
-                    </p>
-                  </div>
-
-                  <div className="shrink-0 sm:text-right">
-                    <p className="font-semibold text-emerald-600">
-                      +{record.quantityAdded}
-                    </p>
-                    <p className="text-sm text-slate-500">
-                      {record.previousStock} → {record.newStock}
-                    </p>
-                  </div>
-                </div>
-
-                {record.note ? (
-                  <p className="mt-3 break-words text-sm text-slate-600">
-                    {record.note}
-                  </p>
-                ) : null}
-              </div>
-            ))
-          )}
-        </div>
-      </section>
-
-      {restockingItem && (
-        <RestockForm
-          item={restockingItem}
-          onSave={({ productId, quantityAdded, note }) =>
-            restockProduct({ productId, quantityAdded, note })
-          }
-          onClose={() => setRestockingItemId(null)}
-        />
-      )}
     </div>
   );
-}
+} 
