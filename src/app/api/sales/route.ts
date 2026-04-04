@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import { createSale, getSales } from "@/lib/db/sale";
-import { addDebtFromSale } from "@/lib/db/debt";
+import { createSaleWithInventory, getSales } from "@/lib/db/sale";
 
 function getDateRange(range: string | null) {
   const now = new Date();
@@ -92,8 +91,11 @@ export async function POST(request: Request) {
 
     if (
       typeof body.subtotal !== "number" ||
+      Number.isNaN(body.subtotal) ||
       typeof body.amountPaid !== "number" ||
+      Number.isNaN(body.amountPaid) ||
       typeof body.balance !== "number" ||
+      Number.isNaN(body.balance) ||
       !body.paymentStatus ||
       !Array.isArray(body.items) ||
       body.items.length === 0
@@ -104,19 +106,76 @@ export async function POST(request: Request) {
       );
     }
 
-    const sale = await createSale(body);
-
-    if (body.paymentStatus === "partial" || body.paymentStatus === "owed") {
-      const customerName = body.customerName || "Walk-in Customer";
-
-      if (body.balance > 0) {
-        await addDebtFromSale(customerName, body.balance);
+    for (const item of body.items) {
+      if (
+        !item.productId ||
+        !item.productSaleUnitId ||
+        typeof item.quantity !== "number" ||
+        Number.isNaN(item.quantity) ||
+        item.quantity <= 0 ||
+        typeof item.unitPrice !== "number" ||
+        Number.isNaN(item.unitPrice) ||
+        item.unitPrice < 0 ||
+        typeof item.total !== "number" ||
+        Number.isNaN(item.total) ||
+        item.total < 0 ||
+        typeof item.baseUnitsConsumed !== "number" ||
+        Number.isNaN(item.baseUnitsConsumed) ||
+        item.baseUnitsConsumed <= 0
+      ) {
+        return NextResponse.json(
+          { error: "Invalid sale item payload" },
+          { status: 400 },
+        );
       }
     }
+
+    if (body.paymentStatus === "paid" && body.balance !== 0) {
+      return NextResponse.json(
+        { error: "Paid sale must have zero balance" },
+        { status: 400 },
+      );
+    }
+
+    if (body.paymentStatus === "owed" && body.amountPaid !== 0) {
+      return NextResponse.json(
+        { error: "Owed sale must have zero amount paid" },
+        { status: 400 },
+      );
+    }
+
+    if (body.paymentStatus !== "paid" && body.balance <= 0) {
+      return NextResponse.json(
+        { error: "Partial or owed sale must have a positive balance" },
+        { status: 400 },
+      );
+    }
+
+    const sale = await createSaleWithInventory({
+      customerName: body.customerName?.trim() || "Walk-in Customer",
+      subtotal: body.subtotal,
+      amountPaid: body.amountPaid,
+      balance: body.balance,
+      paymentStatus: body.paymentStatus,
+      items: body.items,
+    });
 
     return NextResponse.json(sale, { status: 201 });
   } catch (error) {
     console.error("POST /api/sales error:", error);
+
+    const message =
+      error instanceof Error ? error.message : "Failed to create sale";
+
+    if (
+      message.includes("Not enough stock") ||
+      message.includes("Invalid sale unit") ||
+      message.includes("Product not found") ||
+      message.includes("Base unit mismatch")
+    ) {
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+
     return NextResponse.json(
       { error: "Failed to create sale" },
       { status: 500 },

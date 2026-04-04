@@ -1,6 +1,6 @@
 import DataTable from "@/components/ui/data-table";
 import SummaryCard from "@/components/shared/summary-card";
-import RestockProductButton from "@/features/products/components/restock-product-button";
+import InventoryActionButton from "@/features/products/components/inventory-action-button";
 import { getProducts } from "@/lib/db/product";
 
 export const dynamic = "force-dynamic";
@@ -77,7 +77,7 @@ export default async function InventoryPage() {
 
   const totalItems = items.length;
   const lowStockItems = items.filter(
-    (item) => item.stock > 0 && item.stock <= item.lowStock
+    (item) => item.stock > 0 && item.stock <= item.lowStock,
   ).length;
   const outOfStockItems = items.filter((item) => item.stock === 0).length;
   const stockValue = items.reduce((sum, item) => sum + item.stock * item.price, 0);
@@ -89,7 +89,7 @@ export default async function InventoryPage() {
           Inventory
         </h1>
         <p className="mt-1 text-sm leading-6 text-slate-500 sm:text-base">
-          Monitor stock levels, restock products, and track inventory pressure.
+          Monitor stock levels, restock products, adjust stock, and track inventory pressure.
         </p>
       </div>
 
@@ -153,7 +153,7 @@ export default async function InventoryPage() {
                   </div>
 
                   <div className="pt-1">
-                    <RestockProductButton
+                    <InventoryActionButton
                       productId={item.id}
                       productName={item.name}
                     />
@@ -199,7 +199,7 @@ export default async function InventoryPage() {
                   header: "Actions",
                   accessor: "id",
                   render: (row) => (
-                    <RestockProductButton
+                    <InventoryActionButton
                       productId={row.id}
                       productName={row.name}
                     />
@@ -212,4 +212,4 @@ export default async function InventoryPage() {
       )}
     </div>
   );
-} 
+}

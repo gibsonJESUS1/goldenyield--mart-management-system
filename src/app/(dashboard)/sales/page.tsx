@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import SummaryCard from "@/components/shared/summary-card";
 
 type PaymentStatus = "paid" | "partial" | "owed";
@@ -49,6 +49,7 @@ type CartItem = {
   quantity: number;
   total: number;
   baseUnitsConsumed: number;
+  priceRules?: ProductSaleUnitPriceRule[];
 };
 
 type SaleRecord = {
@@ -65,7 +66,7 @@ type SaleRecord = {
 function calculateBestFitTotal(
   quantity: number,
   basePrice: number,
-  priceRules?: ProductSaleUnitPriceRule[]
+  priceRules?: ProductSaleUnitPriceRule[],
 ) {
   if (!priceRules || priceRules.length === 0) {
     return quantity * basePrice;
@@ -96,13 +97,16 @@ function calculateBestFitTotal(
 
   return total;
 }
+
 export const dynamic = "force-dynamic";
+
 export default function SalesPage() {
   const [products, setProducts] = useState<SaleProduct[]>([]);
   const [loadingProducts, setLoadingProducts] = useState(true);
 
   const [range, setRange] = useState("today");
 
+  const [search, setSearch] = useState("");
   const [selectedProductId, setSelectedProductId] = useState("");
   const [selectedSaleUnitId, setSelectedSaleUnitId] = useState("");
   const [quantity, setQuantity] = useState("1");
@@ -115,6 +119,8 @@ export default function SalesPage() {
   const [salesHistory, setSalesHistory] = useState<SaleRecord[]>([]);
   const [loadingSales, setLoadingSales] = useState(true);
   const [savingSale, setSavingSale] = useState(false);
+
+  const amountPaidInputRef = useRef<HTMLInputElement | null>(null);
 
   async function loadSales() {
     try {
@@ -170,7 +176,7 @@ export default function SalesPage() {
             total: item.total,
             baseUnitsConsumed: item.baseUnitsConsumed,
           })),
-        }))
+        })),
       );
     } catch (error) {
       console.error(error);
@@ -210,6 +216,28 @@ export default function SalesPage() {
     loadSales();
   }, [range]);
 
+  useEffect(() => {
+    if (paymentStatus === "partial") {
+      amountPaidInputRef.current?.focus();
+    }
+  }, [paymentStatus]);
+
+  const filteredProducts = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) {
+      return products;
+    }
+
+    return products.filter((product) => {
+      return (
+        product.name.toLowerCase().includes(query) ||
+        product.category.toLowerCase().includes(query) ||
+        product.ownerName.toLowerCase().includes(query)
+      );
+    });
+  }, [products, search]);
+
   const selectedProduct =
     products.find((product) => product.id === selectedProductId) ?? null;
 
@@ -247,34 +275,59 @@ export default function SalesPage() {
     return 0;
   }, [paymentStatus, subtotal, parsedAmountPaid]);
 
+  function getProductById(productId: string) {
+    return products.find((product) => product.id === productId) ?? null;
+  }
+
+  function getCartBaseUnitsForProduct(productId: string) {
+    return cartItems
+      .filter((item) => item.productId === productId)
+      .reduce((sum, item) => sum + item.baseUnitsConsumed, 0);
+  }
+
   function addItemToCart() {
     if (!selectedProduct || !selectedSaleUnit || !quantity) return;
 
     const parsedQty = Number(quantity);
-    if (!parsedQty || parsedQty <= 0) return;
+
+    if (!Number.isInteger(parsedQty) || parsedQty <= 0) {
+      alert("Enter a valid whole number quantity.");
+      return;
+    }
 
     const baseUnitsConsumed = parsedQty * selectedSaleUnit.quantityInBaseUnit;
 
-    if (baseUnitsConsumed > selectedProduct.stock) {
-      alert(
-        `Not enough stock. Available base stock is ${selectedProduct.stock} ${selectedProduct.unit}.`
-      );
-      return;
-    }
+    const quantityAlreadyInCartForProduct = getCartBaseUnitsForProduct(
+      selectedProduct.id,
+    );
 
     const existingItem = cartItems.find(
       (item) =>
         item.productId === selectedProduct.id &&
-        item.saleUnitId === selectedSaleUnit.id
+        item.saleUnitId === selectedSaleUnit.id,
     );
+
+    const existingItemBaseUnits = existingItem?.baseUnitsConsumed ?? 0;
+    const nextTotalForProduct =
+      quantityAlreadyInCartForProduct - existingItemBaseUnits + baseUnitsConsumed;
+
+    if (nextTotalForProduct > selectedProduct.stock) {
+      alert(
+        `Not enough stock. Available base stock is ${selectedProduct.stock} ${selectedProduct.unit}.`,
+      );
+      return;
+    }
 
     if (existingItem) {
       const nextQty = existingItem.quantity + parsedQty;
       const nextBaseUnits = nextQty * selectedSaleUnit.quantityInBaseUnit;
 
-      if (nextBaseUnits > selectedProduct.stock) {
+      const nextProductTotal =
+        quantityAlreadyInCartForProduct - existingItem.baseUnitsConsumed + nextBaseUnits;
+
+      if (nextProductTotal > selectedProduct.stock) {
         alert(
-          `Not enough stock for this quantity. Available base stock is ${selectedProduct.stock} ${selectedProduct.unit}.`
+          `Not enough stock for this quantity. Available base stock is ${selectedProduct.stock} ${selectedProduct.unit}.`,
         );
         return;
       }
@@ -288,13 +341,16 @@ export default function SalesPage() {
                 quantity: nextQty,
                 total: calculateBestFitTotal(
                   nextQty,
-                  item.unitPrice,
-                  selectedSaleUnit.priceRules
+                  selectedSaleUnit.sellingPrice,
+                  selectedSaleUnit.priceRules,
                 ),
                 baseUnitsConsumed: nextBaseUnits,
+                quantityInBaseUnit: selectedSaleUnit.quantityInBaseUnit,
+                unitPrice: selectedSaleUnit.sellingPrice,
+                priceRules: selectedSaleUnit.priceRules,
               }
-            : item
-        )
+            : item,
+        ),
       );
     } else {
       setCartItems((prev) => [
@@ -311,9 +367,10 @@ export default function SalesPage() {
           total: calculateBestFitTotal(
             parsedQty,
             selectedSaleUnit.sellingPrice,
-            selectedSaleUnit.priceRules
+            selectedSaleUnit.priceRules,
           ),
           baseUnitsConsumed,
+          priceRules: selectedSaleUnit.priceRules,
         },
       ]);
     }
@@ -325,47 +382,83 @@ export default function SalesPage() {
     setCartItems((prev) =>
       prev.filter(
         (item) =>
-          !(item.productId === productId && item.saleUnitId === saleUnitId)
-      )
+          !(item.productId === productId && item.saleUnitId === saleUnitId),
+      ),
+    );
+  }
+
+  function changeCartItemQuantity(
+    productId: string,
+    saleUnitId: string,
+    delta: number,
+  ) {
+    const existingItem = cartItems.find(
+      (item) => item.productId === productId && item.saleUnitId === saleUnitId,
+    );
+
+    if (!existingItem) return;
+
+    const nextQty = existingItem.quantity + delta;
+
+    if (nextQty < 1) {
+      return;
+    }
+
+    const product = getProductById(productId);
+
+    if (!product) {
+      alert("Product not found.");
+      return;
+    }
+
+    const nextBaseUnits = nextQty * existingItem.quantityInBaseUnit;
+
+    const quantityAlreadyInCartForProduct = getCartBaseUnitsForProduct(productId);
+    const nextProductTotal =
+      quantityAlreadyInCartForProduct -
+      existingItem.baseUnitsConsumed +
+      nextBaseUnits;
+
+    if (nextProductTotal > product.stock) {
+      alert(
+        `Not enough stock. Available base stock is ${product.stock} ${product.unit}.`,
+      );
+      return;
+    }
+
+    setCartItems((prev) =>
+      prev.map((item) =>
+        item.productId === productId && item.saleUnitId === saleUnitId
+          ? {
+              ...item,
+              quantity: nextQty,
+              baseUnitsConsumed: nextBaseUnits,
+              total: calculateBestFitTotal(
+                nextQty,
+                item.unitPrice,
+                item.priceRules,
+              ),
+            }
+          : item,
+      ),
     );
   }
 
   async function saveSale() {
-    if (cartItems.length === 0) return;
+    if (cartItems.length === 0) {
+      alert("Add at least one item to the cart.");
+      return;
+    }
 
     setSavingSale(true);
 
     try {
-      const groupedStockReduction = new Map<string, number>();
-
-      for (const item of cartItems) {
-        const current = groupedStockReduction.get(item.productId) ?? 0;
-        groupedStockReduction.set(
-          item.productId,
-          current + item.baseUnitsConsumed
-        );
-      }
-
-      for (const [productId, quantityToReduce] of groupedStockReduction) {
-        const res = await fetch(`/api/products/${productId}/stock`, {
-          method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ quantityToReduce }),
-        });
-
-        if (!res.ok) {
-          throw new Error("Failed to reduce stock");
-        }
-      }
-
       const resolvedAmountPaid =
         paymentStatus === "paid"
           ? subtotal
           : paymentStatus === "owed"
-          ? 0
-          : parsedAmountPaid;
+            ? 0
+            : parsedAmountPaid;
 
       const salePayload = {
         customerName: customerName.trim() || "Walk-in Customer",
@@ -394,11 +487,11 @@ export default function SalesPage() {
         body: JSON.stringify(salePayload),
       });
 
-      if (!saleRes.ok) {
-        throw new Error("Failed to save sale");
-      }
+      const saleData = await saleRes.json();
 
-      await saleRes.json();
+      if (!saleRes.ok) {
+        throw new Error(saleData.error || "Failed to save sale");
+      }
 
       setCartItems([]);
       setCustomerName("");
@@ -407,12 +500,13 @@ export default function SalesPage() {
       setSelectedProductId("");
       setSelectedSaleUnitId("");
       setQuantity("1");
+      setSearch("");
 
       await Promise.all([loadProducts(), loadSales()]);
       alert("Sale saved and stock updated.");
     } catch (error) {
       console.error(error);
-      alert("Failed to save sale");
+      alert(error instanceof Error ? error.message : "Failed to save sale");
     } finally {
       setSavingSale(false);
     }
@@ -420,11 +514,11 @@ export default function SalesPage() {
 
   const totalSalesRecords = salesHistory.length;
   const owedSalesCount = salesHistory.filter(
-    (sale) => sale.paymentStatus === "owed" || sale.balance > 0
+    (sale) => sale.paymentStatus === "owed" || sale.balance > 0,
   ).length;
   const totalOutstanding = salesHistory.reduce(
     (sum, sale) => sum + sale.balance,
-    0
+    0,
   );
 
   if (loadingProducts) {
@@ -471,16 +565,16 @@ export default function SalesPage() {
         />
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+      <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4">
-            <h2 className="text-lg font-bold text-slate-900">Create Sale</h2>
+          <div className="mb-5">
+            <h2 className="text-lg font-bold text-slate-900">Add Product</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Choose a product, selling unit, and quantity.
+              Search product, choose selling unit, set quantity, and add to cart.
             </p>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-4">
             <Field label="Customer Name (Optional)">
               <input
                 className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
@@ -490,76 +584,138 @@ export default function SalesPage() {
               />
             </Field>
 
-            <Field label="Product">
-              <select
-                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-emerald-500"
-                value={selectedProductId}
-                onChange={(e) => setSelectedProductId(e.target.value)}
-              >
-                <option value="">Select product</option>
-                {products.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.name} — Base Stock: {product.stock} {product.unit}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field label="Selling Unit">
-              <select
-                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-emerald-500"
-                value={selectedSaleUnitId}
-                onChange={(e) => setSelectedSaleUnitId(e.target.value)}
-                disabled={!selectedProduct}
-              >
-                <option value="">Select selling unit</option>
-                {availableSaleUnits.map((saleUnit) => (
-                  <option key={saleUnit.id} value={saleUnit.id}>
-                    {saleUnit.unitName} — ₦{saleUnit.sellingPrice.toLocaleString()} — uses{" "}
-                    {saleUnit.quantityInBaseUnit} base
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field label="Quantity">
+            <Field label="Search Product">
               <input
-                type="number"
-                min="1"
                 className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
-                value={quantity}
-                onChange={(e) => setQuantity(e.target.value)}
+                placeholder="Search by product, category, or owner"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
               />
             </Field>
 
-            <div className="md:col-span-2 flex items-end">
-              <button
-                onClick={addItemToCart}
-                type="button"
-                className="w-full rounded-2xl bg-emerald-600 px-5 py-3 font-medium text-white shadow hover:bg-emerald-700"
-              >
-                Add Item
-              </button>
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Product">
+                <select
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-emerald-500"
+                  value={selectedProductId}
+                  onChange={(e) => setSelectedProductId(e.target.value)}
+                >
+                  <option value="">Select product</option>
+                  {filteredProducts.map((product) => (
+                    <option key={product.id} value={product.id}>
+                      {product.name} — Stock: {product.stock} {product.unit}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label="Selling Unit">
+                <select
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-emerald-500"
+                  value={selectedSaleUnitId}
+                  onChange={(e) => setSelectedSaleUnitId(e.target.value)}
+                  disabled={!selectedProduct}
+                >
+                  <option value="">Select selling unit</option>
+                  {availableSaleUnits.map((saleUnit) => (
+                    <option key={saleUnit.id} value={saleUnit.id}>
+                      {saleUnit.unitName} — ₦{saleUnit.sellingPrice.toLocaleString()} — uses{" "}
+                      {saleUnit.quantityInBaseUnit} base
+                    </option>
+                  ))}
+                </select>
+              </Field>
             </div>
+
+            <Field label="Quantity">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setQuantity((current) =>
+                      String(Math.max(1, Number(current || 1) - 1)),
+                    )
+                  }
+                  className="rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  -
+                </button>
+
+                <input
+                  type="number"
+                  min="1"
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                />
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    setQuantity((current) =>
+                      String(Math.max(1, Number(current || 1) + 1)),
+                    )
+                  }
+                  className="rounded-xl border border-slate-300 px-4 py-3 font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  +
+                </button>
+              </div>
+            </Field>
+
+            <button
+              onClick={addItemToCart}
+              type="button"
+              className="w-full rounded-2xl bg-emerald-600 px-5 py-3 font-medium text-white shadow hover:bg-emerald-700"
+            >
+              Add Item
+            </button>
           </div>
 
           {selectedProduct && selectedSaleUnit && (
-            <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
-              <p>
-                Base unit: <span className="font-semibold">{selectedProduct.unit}</span>
-              </p>
-              <p>
-                This selling unit uses{" "}
-                <span className="font-semibold">
-                  {selectedSaleUnit.quantityInBaseUnit}
-                </span>{" "}
-                base unit(s) per quantity sold.
-              </p>
+            <div className="mt-5 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+              <div className="grid gap-2 sm:grid-cols-2">
+                <p>
+                  Base unit: <span className="font-semibold">{selectedProduct.unit}</span>
+                </p>
+                <p>
+                  Available stock:{" "}
+                  <span className="font-semibold">
+                    {selectedProduct.stock} {selectedProduct.unit}
+                  </span>
+                </p>
+                <p>
+                  Uses per sale:{" "}
+                  <span className="font-semibold">
+                    {selectedSaleUnit.quantityInBaseUnit}
+                  </span>{" "}
+                  base unit(s)
+                </p>
+                <p>
+                  Max possible:{" "}
+                  <span className="font-semibold">
+                    {Math.floor(
+                      selectedProduct.stock / selectedSaleUnit.quantityInBaseUnit,
+                    )}
+                  </span>{" "}
+                  {selectedSaleUnit.unitName}
+                </p>
+              </div>
+
+              {selectedProduct.stock === 0 ? (
+                <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-600">
+                  This product is out of stock.
+                </p>
+              ) : selectedProduct.stock <= selectedProduct.lowStock ? (
+                <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700">
+                  Low stock warning for this product.
+                </p>
+              ) : null}
 
               {selectedSaleUnit.priceRules && selectedSaleUnit.priceRules.length > 0 ? (
-                <div className="mt-2">
+                <div className="mt-3">
                   <p className="font-medium text-slate-700">Price rules:</p>
-                  <div className="mt-1 flex flex-wrap gap-2">
+                  <div className="mt-2 flex flex-wrap gap-2">
                     {selectedSaleUnit.priceRules.map((rule) => (
                       <span
                         key={rule.id}
@@ -573,127 +729,191 @@ export default function SalesPage() {
               ) : null}
             </div>
           )}
+        </section>
 
-          <div className="mt-6 space-y-3">
+        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:sticky lg:top-4 lg:self-start">
+          <div className="mb-5">
+            <h2 className="text-lg font-bold text-slate-900">Cart & Payment</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Review items, update quantity, choose payment, and save the sale.
+            </p>
+          </div>
+
+          <div className="space-y-3">
             {cartItems.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-sm text-slate-500">
                 No items added yet.
               </div>
             ) : (
-              cartItems.map((item) => (
-                <div
-                  key={`${item.productId}-${item.saleUnitId}`}
-                  className="flex items-center justify-between rounded-2xl bg-slate-50 p-4"
-                >
-                  <div>
-                    <p className="font-semibold text-slate-900">{item.productName}</p>
-                    <p className="text-sm text-slate-500">
-                      {item.ownerName} • {item.quantity} {item.saleUnitName}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      Consumes {item.baseUnitsConsumed} base unit(s)
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-4">
-                    <p className="font-semibold text-slate-900">
-                      ₦{item.total.toLocaleString()}
-                    </p>
-                    <button
-                      onClick={() => removeItem(item.productId, item.saleUnitId)}
-                      className="text-sm font-medium text-red-600 hover:underline"
+              <>
+                <div className="max-h-[360px] space-y-3 overflow-y-auto pr-1">
+                  {cartItems.map((item) => (
+                    <div
+                      key={`${item.productId}-${item.saleUnitId}`}
+                      className="rounded-2xl bg-slate-50 p-4"
                     >
-                      Remove
-                    </button>
-                  </div>
+                      <div className="flex flex-col gap-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-semibold text-slate-900">{item.productName}</p>
+                            <p className="text-sm text-slate-500">
+                              {item.ownerName} • {item.saleUnitName}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              Consumes {item.baseUnitsConsumed} base unit(s)
+                            </p>
+                          </div>
+
+                          <button
+                            onClick={() => removeItem(item.productId, item.saleUnitId)}
+                            className="text-sm font-medium text-red-600 hover:underline"
+                          >
+                            Remove
+                          </button>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                changeCartItemQuantity(
+                                  item.productId,
+                                  item.saleUnitId,
+                                  -1,
+                                )
+                              }
+                              className="rounded-lg border border-slate-300 px-3 py-1.5 font-semibold text-slate-700 hover:bg-white"
+                            >
+                              -
+                            </button>
+
+                            <span className="min-w-8 text-center font-semibold text-slate-900">
+                              {item.quantity}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                changeCartItemQuantity(
+                                  item.productId,
+                                  item.saleUnitId,
+                                  1,
+                                )
+                              }
+                              className="rounded-lg border border-slate-300 px-3 py-1.5 font-semibold text-slate-700 hover:bg-white"
+                            >
+                              +
+                            </button>
+                          </div>
+
+                          <p className="font-semibold text-slate-900">
+                            ₦{item.total.toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!window.confirm("Clear all items from cart?")) return;
+                    setCartItems([]);
+                  }}
+                  className="w-full rounded-2xl border border-red-300 px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50"
+                >
+                  Clear Cart
+                </button>
+              </>
             )}
           </div>
-        </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4">
-            <h2 className="text-lg font-bold text-slate-900">Payment Summary</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              Choose whether the sale is paid, partial, or owed.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            <Field label="Payment Status">
-              <select
-                className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-emerald-500"
-                value={paymentStatus}
-                onChange={(e) => setPaymentStatus(e.target.value as PaymentStatus)}
-              >
-                <option value="paid">Paid</option>
-                <option value="partial">Partial Payment</option>
-                <option value="owed">Owed</option>
-              </select>
-            </Field>
-
-            {paymentStatus === "partial" && (
-              <Field label="Amount Paid">
-                <input
-                  type="number"
-                  min="0"
-                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
-                  placeholder="Enter amount paid"
-                  value={amountPaid}
-                  onChange={(e) => setAmountPaid(e.target.value)}
-                />
+          <div className="mt-5 border-t border-slate-200 pt-5">
+            <div className="space-y-4">
+              <Field label="Payment Status">
+                <select
+                  className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-emerald-500"
+                  value={paymentStatus}
+                  onChange={(e) => setPaymentStatus(e.target.value as PaymentStatus)}
+                >
+                  <option value="paid">Paid</option>
+                  <option value="partial">Partial Payment</option>
+                  <option value="owed">Owed</option>
+                </select>
               </Field>
-            )}
 
-            <div className="rounded-2xl bg-slate-50 p-4 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-500">Subtotal</span>
-                <span className="font-semibold text-slate-900">
-                  ₦{subtotal.toLocaleString()}
-                </span>
+              {paymentStatus === "partial" && (
+                <Field label="Amount Paid">
+                  <input
+                    ref={amountPaidInputRef}
+                    id="amountPaidInput"
+                    type="number"
+                    min="0"
+                    className="w-full rounded-2xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
+                    placeholder="Enter amount paid"
+                    value={amountPaid}
+                    onChange={(e) => setAmountPaid(e.target.value)}
+                  />
+                </Field>
+              )}
+
+              <div className="rounded-2xl bg-slate-50 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-500">Subtotal</span>
+                  <span className="font-semibold text-slate-900">
+                    ₦{subtotal.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-500">Amount Paid</span>
+                  <span className="font-semibold text-slate-900">
+                    ₦
+                    {(
+                      paymentStatus === "paid"
+                        ? subtotal
+                        : paymentStatus === "owed"
+                          ? 0
+                          : parsedAmountPaid
+                    ).toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-slate-500">Balance</span>
+                  <span className="font-semibold text-red-600">
+                    ₦{balance.toLocaleString()}
+                  </span>
+                </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-500">Amount Paid</span>
-                <span className="font-semibold text-slate-900">
-                  ₦
-                  {(
-                    paymentStatus === "paid"
-                      ? subtotal
-                      : paymentStatus === "owed"
-                      ? 0
-                      : parsedAmountPaid
-                  ).toLocaleString()}
-                </span>
-              </div>
-
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-slate-500">Balance</span>
-                <span className="font-semibold text-red-600">
-                  ₦{balance.toLocaleString()}
-                </span>
-              </div>
+              <button
+                onClick={saveSale}
+                type="button"
+                disabled={savingSale}
+                className="w-full rounded-2xl bg-slate-900 px-5 py-3 font-medium text-white shadow hover:bg-slate-800 disabled:opacity-60"
+              >
+                {savingSale ? "Saving..." : "Save Sale"}
+              </button>
             </div>
-
-            <button
-              onClick={saveSale}
-              type="button"
-              disabled={savingSale}
-              className="w-full rounded-2xl bg-slate-900 px-5 py-3 font-medium text-white shadow hover:bg-slate-800 disabled:opacity-60"
-            >
-              {savingSale ? "Saving..." : "Save Sale"}
-            </button>
           </div>
         </section>
       </div>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="mb-4">
-          <h2 className="text-lg font-bold text-slate-900">Recent Sales</h2>
-          <p className="mt-1 text-sm text-slate-500">
-            Transactions recorded in the database.
-          </p>
+        <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Recent Sales</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Transactions recorded in the database.
+            </p>
+          </div>
+
+          <div className="text-sm text-slate-500">
+            Showing <span className="font-semibold text-slate-900">{range}</span> records
+          </div>
         </div>
 
         <div className="space-y-3">
