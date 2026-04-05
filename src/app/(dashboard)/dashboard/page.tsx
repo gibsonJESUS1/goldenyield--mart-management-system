@@ -30,6 +30,7 @@ type TopProduct = {
   name: string;
   revenue: number;
   quantity: number;
+  profit: number;
 };
 
 type OwnerSummary = {
@@ -37,6 +38,7 @@ type OwnerSummary = {
   ownerName: string;
   productCount: number;
   salesAmount: number;
+  profitAmount: number;
 };
 
 function getDateRange(range: string | undefined) {
@@ -70,25 +72,40 @@ function getDateRange(range: string | undefined) {
 
   return {};
 }
+
 export const dynamic = "force-dynamic";
+
 async function getDashboardView(range: string | undefined) {
   const filters = getDateRange(range);
   const { owners, products, sales, debts } = await getDashboardData(filters);
 
-  const totalSales = sales.reduce((sum, sale) => sum + Number(sale.subtotal), 0);
+  let totalRevenue = 0;
+  let totalCost = 0;
+  let totalProfit = 0;
+
+  sales.forEach((sale) => {
+    sale.items.forEach((item) => {
+      totalRevenue += Number(item.total);
+      totalCost += Number(item.costTotal ?? 0);
+      totalProfit += Number(item.profit ?? 0);
+    });
+  });
 
   const outstandingDebts = debts.reduce(
     (sum, debt) => sum + Number(debt.totalDebt),
-    0
+    0,
   );
 
   const lowStockItems = products.filter(
-    (product) => product.stock > 0 && product.stock <= product.lowStock
+    (product) => product.stock > 0 && product.stock <= product.lowStock,
   ).length;
 
   const outOfStockItems = products.filter(
-    (product) => product.stock === 0
+    (product) => product.stock === 0,
   ).length;
+
+  const profitMargin =
+    totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
 
   const restockPriority: RestockProduct[] = [...products]
     .filter((product) => product.stock <= product.lowStock)
@@ -107,19 +124,29 @@ async function getDashboardView(range: string | undefined) {
     .map((owner) => {
       const ownerProducts = products.filter((product) => product.ownerId === owner.id);
 
-      const salesAmount = sales
+      const ownerItems = sales
         .flatMap((sale) => sale.items)
-        .filter((item) => item.product.ownerId === owner.id)
-        .reduce((sum, item) => sum + Number(item.total), 0);
+        .filter((item) => item.product.ownerId === owner.id);
+
+      const salesAmount = ownerItems.reduce(
+        (sum, item) => sum + Number(item.total),
+        0,
+      );
+
+      const profitAmount = ownerItems.reduce(
+        (sum, item) => sum + Number(item.profit ?? 0),
+        0,
+      );
 
       return {
         ownerId: owner.id,
         ownerName: owner.name,
         productCount: ownerProducts.length,
         salesAmount,
+        profitAmount,
       };
     })
-    .sort((a, b) => b.salesAmount - a.salesAmount);
+    .sort((a, b) => b.profitAmount - a.profitAmount);
 
   const recentSales: RecentSale[] = sales.slice(0, 3).map((sale) => ({
     id: sale.id,
@@ -130,7 +157,7 @@ async function getDashboardView(range: string | undefined) {
 
   const productRevenueMap = new Map<
     string,
-    { name: string; revenue: number; quantity: number }
+    { name: string; revenue: number; quantity: number; profit: number }
   >();
 
   sales.forEach((sale) => {
@@ -140,22 +167,27 @@ async function getDashboardView(range: string | undefined) {
       if (existing) {
         existing.revenue += Number(item.total);
         existing.quantity += item.quantity;
+        existing.profit += Number(item.profit ?? 0);
       } else {
         productRevenueMap.set(item.productId, {
           name: item.product.name,
           revenue: Number(item.total),
           quantity: item.quantity,
+          profit: Number(item.profit ?? 0),
         });
       }
     });
   });
 
   const topProducts: TopProduct[] = Array.from(productRevenueMap.values())
-    .sort((a, b) => b.revenue - a.revenue)
+    .sort((a, b) => b.profit - a.profit)
     .slice(0, 3);
 
   return {
-    totalSales,
+    totalRevenue,
+    totalCost,
+    totalProfit,
+    profitMargin,
     outstandingDebts,
     lowStockItems,
     outOfStockItems,
@@ -189,7 +221,7 @@ export default async function DashboardPage({
             Store Overview
           </h1>
           <p className="mt-1 text-sm leading-6 text-slate-500 sm:text-base">
-            Quick signals for stock, debts, sales, and restock priority.
+            Quick signals for stock, debts, revenue, and profit.
           </p>
         </div>
 
@@ -205,9 +237,24 @@ export default async function DashboardPage({
 
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
-          title="Total Sales"
-          value={`₦${data.totalSales.toLocaleString()}`}
+          title="Revenue"
+          value={`₦${data.totalRevenue.toLocaleString()}`}
           note="Live from recorded sales"
+        />
+        <SummaryCard
+          title="Cost"
+          value={`₦${data.totalCost.toLocaleString()}`}
+          note="Cost of goods sold"
+        />
+        <SummaryCard
+          title="Profit"
+          value={`₦${data.totalProfit.toLocaleString()}`}
+          note="Gross profit"
+        />
+        <SummaryCard
+          title="Profit Margin"
+          value={`${data.profitMargin.toFixed(1)}%`}
+          note="Profit efficiency"
         />
         <SummaryCard
           title="Outstanding Debts"
@@ -223,6 +270,11 @@ export default async function DashboardPage({
           title="Out of Stock"
           value={data.outOfStockItems}
           note="Immediate restock needed"
+        />
+        <SummaryCard
+          title="Restock Priority"
+          value={data.restockPriority.length}
+          note="Urgent items in focus"
         />
       </section>
 
@@ -253,9 +305,8 @@ export default async function DashboardPage({
 
                   <div className="shrink-0 sm:text-right">
                     <p
-                      className={`font-semibold ${
-                        product.stock === 0 ? "text-red-600" : "text-amber-600"
-                      }`}
+                      className={`font-semibold ${product.stock === 0 ? "text-red-600" : "text-amber-600"
+                        }`}
                     >
                       {product.stock === 0 ? "Out of stock" : `${product.stock} left`}
                     </p>
@@ -280,7 +331,7 @@ export default async function DashboardPage({
 
         <SectionCard
           title="Owner Summary"
-          description="Live product count and sales by owner."
+          description="Live product count, revenue, and profit by owner."
         >
           <div className="space-y-3">
             {data.ownerSummary.length === 0 ? (
@@ -291,20 +342,27 @@ export default async function DashboardPage({
               data.ownerSummary.map((item) => (
                 <div
                   key={item.ownerId}
-                  className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+                  className="rounded-2xl bg-slate-50 p-4"
                 >
-                  <div className="min-w-0">
-                    <p className="break-words font-semibold text-slate-900">
-                      {item.ownerName}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {item.productCount} products
-                    </p>
-                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="break-words font-semibold text-slate-900">
+                        {item.ownerName}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {item.productCount} products
+                      </p>
+                    </div>
 
-                  <p className="shrink-0 text-base font-semibold text-slate-900 sm:text-right">
-                    ₦{item.salesAmount.toLocaleString()}
-                  </p>
+                    <div className="shrink-0 sm:text-right">
+                      <p className="text-base font-semibold text-slate-900">
+                        Revenue: ₦{item.salesAmount.toLocaleString()}
+                      </p>
+                      <p className="text-sm font-medium text-emerald-700">
+                        Profit: ₦{item.profitAmount.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               ))
             )}
@@ -342,13 +400,12 @@ export default async function DashboardPage({
                       {sale.customerName}
                     </p>
                     <p
-                      className={`mt-1 text-sm font-medium capitalize ${
-                        sale.paymentStatus === "paid"
+                      className={`mt-1 text-sm font-medium capitalize ${sale.paymentStatus === "paid"
                           ? "text-emerald-600"
                           : sale.paymentStatus === "partial"
-                          ? "text-amber-600"
-                          : "text-red-600"
-                      }`}
+                            ? "text-amber-600"
+                            : "text-red-600"
+                        }`}
                     >
                       {sale.paymentStatus}
                     </p>
@@ -374,7 +431,7 @@ export default async function DashboardPage({
 
         <SectionCard
           title="Top Products"
-          description="Best-performing products by recorded revenue."
+          description="Best-performing products by recorded profit."
         >
           <div className="space-y-3">
             {data.topProducts.length === 0 ? (
@@ -385,20 +442,27 @@ export default async function DashboardPage({
               data.topProducts.map((product) => (
                 <div
                   key={product.name}
-                  className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+                  className="rounded-2xl bg-slate-50 p-4"
                 >
-                  <div className="min-w-0">
-                    <p className="break-words font-semibold text-slate-900">
-                      {product.name}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {product.quantity} unit(s) sold
-                    </p>
-                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="break-words font-semibold text-slate-900">
+                        {product.name}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {product.quantity} unit(s) sold
+                      </p>
+                    </div>
 
-                  <p className="shrink-0 text-base font-bold text-slate-900 sm:text-lg sm:text-right">
-                    ₦{product.revenue.toLocaleString()}
-                  </p>
+                    <div className="shrink-0 sm:text-right">
+                      <p className="text-base font-semibold text-slate-900">
+                        Revenue: ₦{product.revenue.toLocaleString()}
+                      </p>
+                      <p className="text-sm font-medium text-emerald-700">
+                        Profit: ₦{product.profit.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               ))
             )}

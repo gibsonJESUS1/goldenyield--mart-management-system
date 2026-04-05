@@ -37,7 +37,11 @@ export async function getSales(filters: GetSalesFilters = {}) {
     include: {
       items: {
         include: {
-          product: true,
+          product: {
+            include: {
+              owner: true,
+            },
+          },
           productSaleUnit: {
             include: {
               unit: true,
@@ -73,6 +77,7 @@ export async function createSaleWithInventory(
               name: true,
               stock: true,
               unitId: true,
+              costPrice: true,
             },
           },
           unit: {
@@ -101,6 +106,17 @@ export async function createSaleWithInventory(
       }
     }
 
+    const productMap = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        stock: number;
+        costPrice: number;
+        unitName: string;
+      }
+    >();
+
     for (const [productId, totalBaseUnitsConsumed] of groupedByProduct) {
       const product = await tx.product.findUnique({
         where: { id: productId },
@@ -108,6 +124,7 @@ export async function createSaleWithInventory(
           id: true,
           name: true,
           stock: true,
+          costPrice: true,
           unit: {
             select: {
               name: true,
@@ -125,6 +142,14 @@ export async function createSaleWithInventory(
           `Not enough stock for ${product.name}. Available base stock is ${product.stock} ${product.unit.name}.`,
         );
       }
+
+      productMap.set(productId, {
+        id: product.id,
+        name: product.name,
+        stock: product.stock,
+        costPrice: Number(product.costPrice ?? 0),
+        unitName: product.unit.name,
+      });
     }
 
     const sale = await tx.sale.create({
@@ -135,20 +160,39 @@ export async function createSaleWithInventory(
         balance: input.balance,
         paymentStatus: input.paymentStatus,
         items: {
-          create: input.items.map((item) => ({
-            productId: item.productId,
-            productSaleUnitId: item.productSaleUnitId,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            total: item.total,
-            baseUnitsConsumed: item.baseUnitsConsumed,
-          })),
+          create: input.items.map((item) => {
+            const product = productMap.get(item.productId);
+
+            if (!product) {
+              throw new Error("Product cost data not found");
+            }
+
+            const costPricePerBaseUnit = product.costPrice;
+            const costTotal = costPricePerBaseUnit * item.baseUnitsConsumed;
+            const profit = item.total - costTotal;
+
+            return {
+              productId: item.productId,
+              productSaleUnitId: item.productSaleUnitId,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              total: item.total,
+              baseUnitsConsumed: item.baseUnitsConsumed,
+              costPricePerBaseUnit,
+              costTotal,
+              profit,
+            };
+          }),
         },
       },
       include: {
         items: {
           include: {
-            product: true,
+            product: {
+              include: {
+                owner: true,
+              },
+            },
             productSaleUnit: {
               include: {
                 unit: true,

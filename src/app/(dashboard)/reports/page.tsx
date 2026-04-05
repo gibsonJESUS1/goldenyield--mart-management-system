@@ -13,7 +13,16 @@ type OwnerPerformance = {
   ownerId: string;
   ownerName: string;
   sales: number;
+  profit: number;
   products: number;
+};
+
+type TopProductPerformance = {
+  name: string;
+  sold: number;
+  revenue: number;
+  cost: number;
+  profit: number;
 };
 
 function getDateRange(range: string | undefined) {
@@ -55,24 +64,35 @@ function rangeLabel(range: string | undefined) {
   if (range === "month") return "This month";
   return "Today";
 }
+
 export const dynamic = "force-dynamic";
+
 async function getReportsView(range: string | undefined) {
   const filters = getDateRange(range);
   const { owners, products, sales, debts } = await getDashboardData(filters);
 
   const totalSales = sales.length;
-  const totalRevenue = sales.reduce(
-    (sum, sale) => sum + Number(sale.subtotal),
-    0
-  );
+
+  let totalRevenue = 0;
+  let totalCost = 0;
+  let totalProfit = 0;
+
+  sales.forEach((sale) => {
+    sale.items.forEach((item) => {
+      totalRevenue += Number(item.total);
+      totalCost += Number(item.costTotal ?? 0);
+      totalProfit += Number(item.profit ?? 0);
+    });
+  });
+
   const totalOutstanding = debts.reduce(
     (sum, debt) => sum + Number(debt.totalDebt),
-    0
+    0,
   );
 
   const paidSales = sales.filter((sale) => sale.paymentStatus === "paid").length;
   const partialSales = sales.filter(
-    (sale) => sale.paymentStatus === "partial"
+    (sale) => sale.paymentStatus === "partial",
   ).length;
   const owedSales = sales.filter((sale) => sale.paymentStatus === "owed").length;
 
@@ -80,24 +100,31 @@ async function getReportsView(range: string | undefined) {
     .map((owner) => {
       const ownerProducts = products.filter((product) => product.ownerId === owner.id);
 
-      const ownerSales = sales
+      const ownerItems = sales
         .flatMap((sale) => sale.items)
-        .filter((item) => item.product.ownerId === owner.id)
-        .reduce((sum, item) => sum + Number(item.total), 0);
+        .filter((item) => item.product.ownerId === owner.id);
+
+      const ownerSales = ownerItems.reduce(
+        (sum, item) => sum + Number(item.total),
+        0,
+      );
+
+      const ownerProfit = ownerItems.reduce(
+        (sum, item) => sum + Number(item.profit ?? 0),
+        0,
+      );
 
       return {
         ownerId: owner.id,
         ownerName: owner.name,
         sales: ownerSales,
+        profit: ownerProfit,
         products: ownerProducts.length,
       };
     })
-    .sort((a, b) => b.sales - a.sales);
+    .sort((a, b) => b.profit - a.profit);
 
-  const productMap = new Map<
-    string,
-    { name: string; sold: number; revenue: number }
-  >();
+  const productMap = new Map<string, TopProductPerformance>();
 
   sales.forEach((sale) => {
     sale.items.forEach((item) => {
@@ -106,18 +133,22 @@ async function getReportsView(range: string | undefined) {
       if (existing) {
         existing.sold += item.quantity;
         existing.revenue += Number(item.total);
+        existing.cost += Number(item.costTotal ?? 0);
+        existing.profit += Number(item.profit ?? 0);
       } else {
         productMap.set(item.productId, {
           name: item.product.name,
           sold: item.quantity,
           revenue: Number(item.total),
+          cost: Number(item.costTotal ?? 0),
+          profit: Number(item.profit ?? 0),
         });
       }
     });
   });
 
   const topProducts = Array.from(productMap.values())
-    .sort((a, b) => b.revenue - a.revenue)
+    .sort((a, b) => b.profit - a.profit)
     .slice(0, 5);
 
   const lowStockSummary = products
@@ -131,9 +162,15 @@ async function getReportsView(range: string | undefined) {
       lowStock: product.lowStock,
     }));
 
+  const profitMargin =
+    totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+
   return {
     totalSales,
     totalRevenue,
+    totalCost,
+    totalProfit,
+    profitMargin,
     totalOutstanding,
     paidSales,
     partialSales,
@@ -157,7 +194,7 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
             Reports
           </h1>
           <p className="mt-1 text-sm leading-6 text-slate-500 sm:text-base">
-            Review live sales, debt exposure, stock pressure, and owner performance.
+            Review live sales, debt exposure, stock pressure, owner performance, and profit.
           </p>
         </div>
 
@@ -171,7 +208,7 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
         </div>
       </div>
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
           title="Total Sales Records"
           value={data.totalSales}
@@ -181,6 +218,21 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
           title="Total Revenue"
           value={`₦${data.totalRevenue.toLocaleString()}`}
           note="Gross recorded sales"
+        />
+        <SummaryCard
+          title="Total Cost"
+          value={`₦${data.totalCost.toLocaleString()}`}
+          note="Cost of goods sold"
+        />
+        <SummaryCard
+          title="Total Profit"
+          value={`₦${data.totalProfit.toLocaleString()}`}
+          note="Gross profit"
+        />
+        <SummaryCard
+          title="Profit Margin"
+          value={`${data.profitMargin.toFixed(1)}%`}
+          note="Profit efficiency"
         />
         <SummaryCard
           title="Outstanding Balance"
@@ -193,21 +245,16 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
           note="Fully settled transactions"
         />
         <SummaryCard
-          title="Partial Sales"
-          value={data.partialSales}
-          note="Partially settled transactions"
-        />
-        <SummaryCard
-          title="Owed Sales"
-          value={data.owedSales}
-          note="Completely unpaid transactions"
+          title="Partial / Owed"
+          value={data.partialSales + data.owedSales}
+          note="Needs payment follow-up"
         />
       </section>
 
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <SectionCard
           title="Owner Performance"
-          description="Live sales and product coverage by owner."
+          description="Live revenue and profit performance by owner."
         >
           <div className="space-y-3">
             {data.ownerSummary.length === 0 ? (
@@ -218,20 +265,27 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
               data.ownerSummary.map((item) => (
                 <div
                   key={item.ownerId}
-                  className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+                  className="rounded-2xl bg-slate-50 p-4"
                 >
-                  <div className="min-w-0">
-                    <p className="break-words font-semibold text-slate-900">
-                      {item.ownerName}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {item.products} tracked products
-                    </p>
-                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="break-words font-semibold text-slate-900">
+                        {item.ownerName}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {item.products} tracked products
+                      </p>
+                    </div>
 
-                  <p className="shrink-0 font-semibold text-slate-900 sm:text-right">
-                    ₦{item.sales.toLocaleString()}
-                  </p>
+                    <div className="shrink-0 sm:text-right">
+                      <p className="font-semibold text-slate-900">
+                        Revenue: ₦{item.sales.toLocaleString()}
+                      </p>
+                      <p className="text-sm font-medium text-emerald-700">
+                        Profit: ₦{item.profit.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               ))
             )}
@@ -239,8 +293,8 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
         </SectionCard>
 
         <SectionCard
-          title="Top Products"
-          description="Best-performing products by current recorded revenue."
+          title="Top Products by Profit"
+          description="Best-performing products by recorded profit."
         >
           <div className="space-y-3">
             {data.topProducts.length === 0 ? (
@@ -251,20 +305,30 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
               data.topProducts.map((item) => (
                 <div
                   key={item.name}
-                  className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+                  className="rounded-2xl bg-slate-50 p-4"
                 >
-                  <div className="min-w-0">
-                    <p className="break-words font-semibold text-slate-900">
-                      {item.name}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      {item.sold} unit(s) sold
-                    </p>
-                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <p className="break-words font-semibold text-slate-900">
+                        {item.name}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {item.sold} unit(s) sold
+                      </p>
+                    </div>
 
-                  <p className="shrink-0 font-semibold text-slate-900 sm:text-right">
-                    ₦{item.revenue.toLocaleString()}
-                  </p>
+                    <div className="shrink-0 sm:text-right">
+                      <p className="font-semibold text-slate-900">
+                        Revenue: ₦{item.revenue.toLocaleString()}
+                      </p>
+                      <p className="text-sm text-slate-500">
+                        Cost: ₦{item.cost.toLocaleString()}
+                      </p>
+                      <p className="text-sm font-medium text-emerald-700">
+                        Profit: ₦{item.profit.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
                 </div>
               ))
             )}
