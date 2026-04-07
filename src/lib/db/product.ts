@@ -108,28 +108,30 @@ export async function createProduct(data: CreateProductInput) {
           sellingPrice: saleUnit.sellingPrice,
           isDefault: saleUnit.isDefault ?? false,
           active: saleUnit.active ?? true,
-          priceRules:
-            saleUnit.priceRules && saleUnit.priceRules.length > 0
-              ? {
+          ...(saleUnit.priceRules && saleUnit.priceRules.length > 0
+            ? {
+                priceRules: {
                   create: saleUnit.priceRules.map((rule) => ({
                     quantity: rule.quantity,
                     price: rule.price,
                     active: rule.active ?? true,
                   })),
-                }
-              : undefined,
+                },
+              }
+            : {}),
         })),
       },
-      stockMovements:
-        data.stock > 0
-          ? {
+      ...(data.stock > 0
+        ? {
+            stockMovements: {
               create: {
-                type: "restock",
+                type: "IN",
                 quantity: data.stock,
                 note: "Initial stock",
               },
-            }
-          : undefined,
+            },
+          }
+        : {}),
     },
     include: {
       owner: true,
@@ -175,16 +177,17 @@ export async function updateProduct(id: string, data: UpdateProductInput) {
           sellingPrice: saleUnit.sellingPrice,
           isDefault: saleUnit.isDefault ?? false,
           active: saleUnit.active ?? true,
-          priceRules:
-            saleUnit.priceRules && saleUnit.priceRules.length > 0
-              ? {
+          ...(saleUnit.priceRules && saleUnit.priceRules.length > 0
+            ? {
+                priceRules: {
                   create: saleUnit.priceRules.map((rule) => ({
                     quantity: rule.quantity,
                     price: rule.price,
                     active: rule.active ?? true,
                   })),
-                }
-              : undefined,
+                },
+              }
+            : {}),
         })),
       },
     },
@@ -224,7 +227,7 @@ export async function reduceProductStock(
       stock: product.stock - quantityToReduce,
       stockMovements: {
         create: {
-          type: "sale",
+          type: "OUT",
           quantity: quantityToReduce,
           note: "Stock reduced from sale",
         },
@@ -256,7 +259,7 @@ export async function restockProduct(
       stock: product.stock + quantityToAdd,
       stockMovements: {
         create: {
-          type: "restock",
+          type: "IN",
           quantity: quantityToAdd,
           note: note || "Manual restock",
         },

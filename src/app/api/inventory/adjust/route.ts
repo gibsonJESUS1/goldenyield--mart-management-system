@@ -1,34 +1,51 @@
 import { NextResponse } from "next/server";
-import { adjustProductStock } from "@/lib/db/inventory";
+import { adjustInventory } from "@/lib/db/inventory";
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as {
-      productId?: string;
-      quantity?: number;
-      note?: string;
-    };
+    const body = await request.json();
 
-    if (!body.productId || typeof body.quantity !== "number") {
+    const productId =
+      typeof body.productId === "string" ? body.productId.trim() : "";
+    const quantity = Number(body.quantity);
+    const note = typeof body.note === "string" ? body.note.trim() : undefined;
+
+    if (!productId) {
       return NextResponse.json(
-        { error: "Product and quantity are required" },
+        { error: "Product ID is required" },
         { status: 400 },
       );
     }
 
-    const result = await adjustProductStock({
-      productId: body.productId,
-      quantity: body.quantity,
-      note: body.note,
+    if (!Number.isFinite(quantity) || quantity === 0) {
+      return NextResponse.json(
+        { error: "Quantity cannot be zero" },
+        { status: 400 },
+      );
+    }
+
+    const product = await adjustInventory({
+      productId,
+      quantity,
+      note,
     });
 
-    return NextResponse.json(result, { status: 200 });
+    return NextResponse.json(
+      {
+        message: "Inventory adjusted successfully",
+        product,
+      },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("POST /api/inventory/adjust error:", error);
 
-    const message =
-      error instanceof Error ? error.message : "Failed to adjust stock";
-
-    return NextResponse.json({ error: message }, { status: 400 });
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error ? error.message : "Failed to adjust inventory",
+      },
+      { status: 500 },
+    );
   }
 }

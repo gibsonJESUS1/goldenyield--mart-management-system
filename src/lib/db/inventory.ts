@@ -1,35 +1,72 @@
 import { prisma } from "@/lib/prisma";
 
-type RestockProductInput = {
+type RestockInput = {
   productId: string;
   quantity: number;
   note?: string;
 };
 
-type AdjustProductInput = {
+type AdjustInventoryInput = {
   productId: string;
   quantity: number;
   note?: string;
 };
 
-export async function restockProduct(input: RestockProductInput) {
-  if (!input.productId) {
-    throw new Error("Product is required");
+type InventoryFilters = {
+  lowStockOnly?: boolean;
+  ownerId?: string;
+  categoryId?: string;
+};
+
+export async function getInventory(filters?: InventoryFilters) {
+  return prisma.product
+    .findMany({
+      where: {
+        ...(filters?.ownerId ? { ownerId: filters.ownerId } : {}),
+        ...(filters?.categoryId ? { categoryId: filters.categoryId } : {}),
+      },
+      include: {
+        owner: true,
+        category: true,
+        unit: true,
+        saleUnits: {
+          include: {
+            unit: true,
+            priceRules: {
+              where: { active: true },
+              orderBy: { quantity: "desc" },
+            },
+          },
+          orderBy: { createdAt: "asc" },
+        },
+        stockMovements: {
+          orderBy: { createdAt: "desc" },
+          take: 10,
+        },
+      },
+      orderBy: { name: "asc" },
+    })
+    .then((products) =>
+      filters?.lowStockOnly
+        ? products.filter((product) => product.stock <= product.lowStock)
+        : products,
+    );
+}
+
+export async function restockInventory(input: RestockInput) {
+  if (!Number.isFinite(input.quantity) || input.quantity <= 0) {
+    throw new Error("Quantity must be greater than zero");
   }
 
-  if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
-    throw new Error("Restock quantity must be a positive whole number");
-  }
-
-  const existingProduct = await prisma.product.findUnique({
+  const product = await prisma.product.findUnique({
     where: { id: input.productId },
     select: {
       id: true,
-      name: true,
+      stock: true,
     },
   });
 
-  if (!existingProduct) {
+  if (!product) {
     throw new Error("Product not found");
   }
 
@@ -37,7 +74,7 @@ export async function restockProduct(input: RestockProductInput) {
     prisma.stockMovement.create({
       data: {
         productId: input.productId,
-        type: "restock",
+        type: "IN",
         quantity: input.quantity,
         note: input.note?.trim() || "Manual restock",
       },
@@ -52,82 +89,113 @@ export async function restockProduct(input: RestockProductInput) {
     }),
   ]);
 
-  const updatedProduct = await prisma.product.findUnique({
+  return prisma.product.findUnique({
+    where: { id: input.productId },
+    include: {
+      owner: true,
+      category: true,
+      unit: true,
+      saleUnits: {
+        include: {
+          unit: true,
+          priceRules: {
+            where: { active: true },
+            orderBy: { quantity: "desc" },
+          },
+        },
+        orderBy: { createdAt: "asc" },
+      },
+      stockMovements: {
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      },
+    },
+  });
+}
+
+export async function adjustInventory(input: AdjustInventoryInput) {
+  if (!Number.isFinite(input.quantity) || input.quantity === 0) {
+    throw new Error("Quantity cannot be zero");
+  }
+
+  const product = await prisma.product.findUnique({
     where: { id: input.productId },
     select: {
       id: true,
-      name: true,
       stock: true,
+      name: true,
     },
   });
 
-  if (!updatedProduct) {
-    throw new Error("Failed to load updated product");
+  if (!product) {
+    throw new Error("Product not found");
   }
 
-  return updatedProduct;
-}
+  const absoluteQuantity = Math.abs(input.quantity);
+  const isIncrease = input.quantity > 0;
 
-export async function adjustProductStock(input: AdjustProductInput) {
-  if (!input.productId) {
-    throw new Error("Product is required");
+  if (!isIncrease && product.stock < absoluteQuantity) {
+    throw new Error(
+      `Cannot reduce ${absoluteQuantity}. Available stock is ${product.stock}.`,
+    );
   }
 
-  if (!Number.isInteger(input.quantity) || input.quantity === 0) {
-    throw new Error("Adjustment quantity must be a non-zero whole number");
-  }
+  await prisma.$transaction([
+    prisma.stockMovement.create({
+      data: {
+        productId: input.productId,
+        type: isIncrease ? "IN" : "OUT",
+        quantity: absoluteQuantity,
+        note:
+          input.note?.trim() ||
+          (isIncrease ? "Manual stock increase" : "Manual stock decrease"),
+      },
+    }),
+    prisma.product.update({
+      where: { id: input.productId },
+      data: {
+        stock: isIncrease
+          ? { increment: absoluteQuantity }
+          : { decrement: absoluteQuantity },
+      },
+    }),
+  ]);
 
-  return prisma.$transaction(
-    async (tx) => {
-      const product = await tx.product.findUnique({
-        where: { id: input.productId },
-        select: {
-          id: true,
-          name: true,
-          stock: true,
-        },
-      });
-
-      if (!product) {
-        throw new Error("Product not found");
-      }
-
-      const nextStock = product.stock + input.quantity;
-
-      if (nextStock < 0) {
-        throw new Error(
-          `Adjustment would make stock negative for ${product.name}. Current stock is ${product.stock}.`,
-        );
-      }
-
-      await tx.stockMovement.create({
-        data: {
-          productId: input.productId,
-          type: "adjustment",
-          quantity: input.quantity,
-          note: input.note?.trim() || "Manual stock adjustment",
-        },
-      });
-
-      const updatedProduct = await tx.product.update({
-        where: { id: input.productId },
-        data: {
-          stock: {
-            increment: input.quantity,
+  return prisma.product.findUnique({
+    where: { id: input.productId },
+    include: {
+      owner: true,
+      category: true,
+      unit: true,
+      saleUnits: {
+        include: {
+          unit: true,
+          priceRules: {
+            where: { active: true },
+            orderBy: { quantity: "desc" },
           },
         },
-        select: {
-          id: true,
-          name: true,
-          stock: true,
-        },
-      });
+        orderBy: { createdAt: "asc" },
+      },
+      stockMovements: {
+        orderBy: { createdAt: "desc" },
+        take: 10,
+      },
+    },
+  });
+}
 
-      return updatedProduct;
+export async function getStockMovements() {
+  return prisma.stockMovement.findMany({
+    include: {
+      product: {
+        include: {
+          owner: true,
+          category: true,
+          unit: true,
+        },
+      },
     },
-    {
-      maxWait: 10000,
-      timeout: 15000,
-    },
-  );
+    orderBy: { createdAt: "desc" },
+  });
 }

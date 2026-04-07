@@ -40,43 +40,40 @@ model ProductUnit {
 }
 
 model Product {
-  id         String   @id @default(cuid())
-  name       String
-  ownerId    String
-  categoryId String
-  unitId     String
-  stock      Int      @default(0)
-  lowStock   Int      @default(0)
-  costPrice  Decimal  @db.Decimal(12, 2) @default(0)
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id               String   @id @default(cuid())
+  name             String
+  ownerId          String
+  categoryId       String
+  unitId           String
+  stock            Int      @default(0)
+  lowStock         Int      @default(0)
+  active           Boolean  @default(true)
+  currentCostPrice Decimal? @db.Decimal(12, 2)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  owner          Owner             @relation(fields: [ownerId], references: [id], onDelete: Restrict)
-  category       Category          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  unit           ProductUnit       @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  owner          Owner             @relation(fields: [ownerId], references: [id])
+  category       Category          @relation(fields: [categoryId], references: [id])
+  unit           ProductUnit       @relation(fields: [unitId], references: [id])
   saleUnits      ProductSaleUnit[]
   saleItems      SaleItem[]
   stockMovements StockMovement[]
-
-  @@index([ownerId])
-  @@index([categoryId])
-  @@index([unitId])
+  purchaseItems  PurchaseItem[]
 }
 
 model ProductSaleUnitPriceRule {
-  id                String          @id @default(cuid())
+  id                String   @id @default(cuid())
   productSaleUnitId String
   quantity          Int
-  price             Decimal         @db.Decimal(12, 2)
-  active            Boolean         @default(true)
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  price             Decimal  @db.Decimal(12, 2)
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  productSaleUnit   ProductSaleUnit @relation(fields: [productSaleUnitId], references: [id], onDelete: Cascade)
+  productSaleUnit ProductSaleUnit @relation(fields: [productSaleUnitId], references: [id], onDelete: Cascade)
 
-  @@index([productSaleUnitId])
   @@unique([productSaleUnitId, quantity])
+  @@index([productSaleUnitId])
 }
 
 model ProductSaleUnit {
@@ -90,9 +87,9 @@ model ProductSaleUnit {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  product   Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
-  unit      ProductUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
-  saleItems SaleItem[]
+  product    Product                    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  unit       ProductUnit                @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  saleItems  SaleItem[]
   priceRules ProductSaleUnitPriceRule[]
 
   @@index([productId])
@@ -106,49 +103,55 @@ enum PaymentStatus {
 }
 
 model Sale {
-  id            String        @id @default(cuid())
-  customerName  String?
-  subtotal      Decimal       @db.Decimal(12, 2)
-  amountPaid    Decimal       @db.Decimal(12, 2)
-  balance       Decimal       @db.Decimal(12, 2)
-  paymentStatus PaymentStatus
-  items         SaleItem[]
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  id           String   @id @default(cuid())
+  customerName String?
+  subtotal     Decimal  @db.Decimal(12, 2)
+  amountPaid   Decimal  @db.Decimal(12, 2)
+  balance      Decimal  @db.Decimal(12, 2)
+  note         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  items            SaleItem[]
+  debtTransactions DebtTransaction[]
 }
 
 model SaleItem {
-  id                   String   @id @default(cuid())
-  saleId               String
-  productId            String
-  productSaleUnitId    String
-  quantity             Int
-  unitPrice            Decimal  @db.Decimal(12, 2)
-  total                Decimal  @db.Decimal(12, 2)
-  baseUnitsConsumed    Int
-  costPricePerBaseUnit Decimal  @db.Decimal(12, 2) @default(0)
-  costTotal            Decimal  @db.Decimal(12, 2) @default(0)
-  profit               Decimal  @db.Decimal(12, 2) @default(0)
-  createdAt            DateTime @default(now())
+  id                 String   @id @default(cuid())
+  saleId             String
+  productId          String
+  saleUnitId         String?
+  quantity           Int
+  quantityInBaseUnit Int
+  unitPrice          Decimal  @db.Decimal(12, 2)
+  lineTotal          Decimal  @db.Decimal(12, 2)
+  unitCostPrice      Decimal? @db.Decimal(12, 2)
+  lineCostTotal      Decimal? @db.Decimal(12, 2)
+  lineProfit         Decimal? @db.Decimal(12, 2)
+  createdAt          DateTime @default(now())
 
-  sale            Sale            @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  product         Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
-  productSaleUnit ProductSaleUnit @relation(fields: [productSaleUnitId], references: [id], onDelete: Restrict)
+  sale     Sale             @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product  Product          @relation(fields: [productId], references: [id])
+  saleUnit ProductSaleUnit? @relation(fields: [saleUnitId], references: [id])
 
   @@index([saleId])
   @@index([productId])
-  @@index([productSaleUnitId])
 }
+
 enum DebtTransactionType {
-  sale
-  payment
-  adjustment
+  SALE_DEBT
+  MANUAL_DEBT
+  PAYMENT
+  ADJUSTMENT_INCREASE
+  ADJUSTMENT_DECREASE
 }
 
 model CustomerDebt {
   id           String   @id @default(cuid())
-  customerName String   @unique
-  totalDebt    Decimal  @db.Decimal(12, 2)
+  customerName String
+  phone        String?
+  note         String?
+  balance      Decimal  @db.Decimal(12, 2)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -158,32 +161,64 @@ model CustomerDebt {
 model DebtTransaction {
   id             String              @id @default(cuid())
   customerDebtId String
+  saleId         String?
   type           DebtTransactionType
   amount         Decimal             @db.Decimal(12, 2)
-  note           String?
+  description    String?
+  reference      String?
   createdAt      DateTime            @default(now())
 
-  customerDebt   CustomerDebt        @relation(fields: [customerDebtId], references: [id], onDelete: Cascade)
+  customerDebt CustomerDebt @relation(fields: [customerDebtId], references: [id], onDelete: Cascade)
+  sale         Sale?        @relation(fields: [saleId], references: [id])
 
   @@index([customerDebtId])
+  @@index([saleId])
+  @@index([createdAt])
 }
+
 enum StockMovementType {
-  restock
-  sale
-  adjustment
+  IN
+  OUT
 }
 
 model StockMovement {
-  id          String            @id @default(cuid())
-  productId   String
-  type        StockMovementType
-  quantity    Int
-  note        String?
-  createdAt   DateTime          @default(now())
+  id        String            @id @default(cuid())
+  productId String
+  type      StockMovementType
+  quantity  Int
+  note      String?
+  createdAt DateTime          @default(now())
 
-  product     Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId])
 }
 
+model Purchase {
+  id           String   @id @default(cuid())
+  reference    String?
+  supplierName String?
+  note         String?
+  totalAmount  Decimal  @db.Decimal(12, 2)
+  purchasedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
+  items PurchaseItem[]
+}
+
+model PurchaseItem {
+  id                 String   @id @default(cuid())
+  purchaseId         String
+  productId          String
+  quantityInBaseUnit Int
+  unitCostPrice      Decimal  @db.Decimal(12, 2)
+  lineTotal          Decimal  @db.Decimal(12, 2)
+  createdAt          DateTime @default(now())
+
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id])
+
+  @@index([purchaseId])
+  @@index([productId])
+}

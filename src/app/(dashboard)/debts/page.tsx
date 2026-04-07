@@ -3,24 +3,71 @@
 import { useEffect, useMemo, useState } from "react";
 import SummaryCard from "@/components/shared/summary-card";
 
+type DebtTransactionType =
+  | "SALE_DEBT"
+  | "MANUAL_DEBT"
+  | "PAYMENT"
+  | "ADJUSTMENT_INCREASE"
+  | "ADJUSTMENT_DECREASE";
+
 type DebtTransaction = {
   id: string;
-  type: "sale" | "payment" | "adjustment";
+  type: DebtTransactionType;
   amount: number;
-  note?: string | null;
+  description?: string | null;
+  reference?: string | null;
+  saleId?: string | null;
   createdAt: string;
 };
 
 type DebtRecord = {
   id: string;
   customerName: string;
-  totalDebt: number;
+  phone?: string | null;
+  note?: string | null;
+  balance: number;
   createdAt: string;
+  updatedAt?: string;
   transactions: DebtTransaction[];
 };
 
 type AdjustmentMode = "increase" | "decrease";
+
 export const dynamic = "force-dynamic";
+
+function formatTransactionType(type: DebtTransactionType) {
+  switch (type) {
+    case "SALE_DEBT":
+      return "Sale Debt";
+    case "MANUAL_DEBT":
+      return "Manual Debt";
+    case "PAYMENT":
+      return "Payment";
+    case "ADJUSTMENT_INCREASE":
+      return "Adjustment Increase";
+    case "ADJUSTMENT_DECREASE":
+      return "Adjustment Decrease";
+    default:
+      return type;
+  }
+}
+
+function getTransactionAmountColor(type: DebtTransactionType) {
+  if (type === "PAYMENT" || type === "ADJUSTMENT_DECREASE") {
+    return "text-emerald-600";
+  }
+
+  if (type === "SALE_DEBT" || type === "MANUAL_DEBT") {
+    return "text-red-600";
+  }
+
+  return "text-amber-600";
+}
+
+function getTransactionAmountPrefix(type: DebtTransactionType) {
+  return type === "PAYMENT" || type === "ADJUSTMENT_DECREASE" ? "-" : "+";
+}
+
 export default function DebtsPage() {
   const [debts, setDebts] = useState<DebtRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -29,7 +76,9 @@ export default function DebtsPage() {
   const [paymentTarget, setPaymentTarget] = useState<DebtRecord | null>(null);
   const [paymentAmount, setPaymentAmount] = useState("");
   const [savingPayment, setSavingPayment] = useState(false);
-const  [range, setRange] = useState("today")
+
+  const [range, setRange] = useState("today");
+
   const [adjustmentTarget, setAdjustmentTarget] = useState<DebtRecord | null>(null);
   const [adjustmentAmount, setAdjustmentAmount] = useState("");
   const [adjustmentMode, setAdjustmentMode] = useState<AdjustmentMode>("increase");
@@ -41,8 +90,8 @@ const  [range, setRange] = useState("today")
       setLoading(true);
 
       const res = await fetch(`/api/debts?range=${range}`, {
-  cache: "no-store",
-});
+        cache: "no-store",
+      });
 
       if (!res.ok) {
         throw new Error("Failed to fetch debts");
@@ -51,13 +100,18 @@ const  [range, setRange] = useState("today")
       const data = (await res.json()) as Array<{
         id: string;
         customerName: string;
-        totalDebt: number;
+        phone?: string | null;
+        note?: string | null;
+        balance: number;
         createdAt: string;
+        updatedAt?: string;
         transactions: Array<{
           id: string;
-          type: "sale" | "payment" | "adjustment";
+          type: DebtTransactionType;
           amount: number;
-          note?: string | null;
+          description?: string | null;
+          reference?: string | null;
+          saleId?: string | null;
           createdAt: string;
         }>;
       }>;
@@ -66,13 +120,18 @@ const  [range, setRange] = useState("today")
         data.map((debt) => ({
           id: debt.id,
           customerName: debt.customerName,
-          totalDebt: debt.totalDebt,
+          phone: debt.phone ?? null,
+          note: debt.note ?? null,
+          balance: debt.balance,
           createdAt: new Date(debt.createdAt).toLocaleString(),
+          updatedAt: debt.updatedAt
+            ? new Date(debt.updatedAt).toLocaleString()
+            : undefined,
           transactions: debt.transactions.map((transaction) => ({
             ...transaction,
             createdAt: new Date(transaction.createdAt).toLocaleString(),
           })),
-        }))
+        })),
       );
     } catch (error) {
       console.error(error);
@@ -88,13 +147,13 @@ const  [range, setRange] = useState("today")
 
   const filteredDebts = useMemo(() => {
     return debts.filter((debt) =>
-      debt.customerName.toLowerCase().includes(search.toLowerCase())
+      debt.customerName.toLowerCase().includes(search.toLowerCase()),
     );
   }, [debts, search]);
 
   const totalDebts = debts.length;
-  const outstandingCount = debts.filter((debt) => debt.totalDebt > 0).length;
-  const totalOutstanding = debts.reduce((sum, debt) => sum + debt.totalDebt, 0);
+  const outstandingCount = debts.filter((debt) => debt.balance > 0).length;
+  const totalOutstanding = debts.reduce((sum, debt) => sum + debt.balance, 0);
 
   async function handleRecordPayment() {
     if (!paymentTarget) return;
@@ -114,7 +173,7 @@ const  [range, setRange] = useState("today")
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          customerName: paymentTarget.customerName,
+          customerDebtId: paymentTarget.id,
           amount,
         }),
       });
@@ -153,9 +212,9 @@ const  [range, setRange] = useState("today")
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          customerName: adjustmentTarget.customerName,
+          customerDebtId: adjustmentTarget.id,
           amount,
-          mode: adjustmentMode,
+          direction: adjustmentMode,
           note: adjustmentNote,
         }),
       });
@@ -212,22 +271,22 @@ const  [range, setRange] = useState("today")
           value={`₦${totalOutstanding.toLocaleString()}`}
         />
       </section>
-      <div className="flex flex-wrap items-center gap-3">
-  <select
-    value={range}
-    onChange={(e) => setRange(e.target.value)}
-    className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
-  >
-    <option value="today">Today</option>
-    <option value="7d">Last 7 days</option>
-    <option value="30d">Last 30 days</option>
-    <option value="month">This month</option>
-  </select>
 
-  <p className="text-sm text-slate-500">
-    Showing data for: <span className="font-medium">{range}</span>
-  </p>
-</div>
+      <div className="flex flex-wrap items-center gap-3">
+        <select
+          value={range}
+          onChange={(e) => setRange(e.target.value)}
+          className="rounded-xl border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="today">Today</option>
+          <option value="week">This week</option>
+          <option value="month">This month</option>
+        </select>
+
+        <p className="text-sm text-slate-500">
+          Showing data for: <span className="font-medium">{range}</span>
+        </p>
+      </div>
 
       <div className="flex items-center">
         <input
@@ -255,18 +314,24 @@ const  [range, setRange] = useState("today")
                     {debt.customerName}
                   </h2>
                   <p className="mt-1 text-sm text-slate-500">{debt.createdAt}</p>
+                  {debt.phone ? (
+                    <p className="mt-1 text-sm text-slate-500">{debt.phone}</p>
+                  ) : null}
+                  {debt.note ? (
+                    <p className="mt-1 text-sm text-slate-600">{debt.note}</p>
+                  ) : null}
                 </div>
 
                 <div className="text-right">
                   <p
                     className={`text-lg font-bold ${
-                      debt.totalDebt > 0 ? "text-red-600" : "text-emerald-600"
+                      debt.balance > 0 ? "text-red-600" : "text-emerald-600"
                     }`}
                   >
-                    ₦{debt.totalDebt.toLocaleString()}
+                    ₦{debt.balance.toLocaleString()}
                   </p>
                   <p className="text-sm text-slate-500">
-                    {debt.totalDebt > 0 ? "Outstanding" : "Cleared"}
+                    {debt.balance > 0 ? "Outstanding" : "Cleared"}
                   </p>
                 </div>
               </div>
@@ -274,7 +339,7 @@ const  [range, setRange] = useState("today")
               <div className="mt-4 flex flex-wrap gap-3">
                 <button
                   onClick={() => setPaymentTarget(debt)}
-                  disabled={debt.totalDebt <= 0}
+                  disabled={debt.balance <= 0}
                   className="rounded-2xl bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Record Payment
@@ -306,8 +371,8 @@ const  [range, setRange] = useState("today")
                       >
                         <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                           <div>
-                            <p className="font-medium text-slate-900 capitalize">
-                              {transaction.type}
+                            <p className="font-medium text-slate-900">
+                              {formatTransactionType(transaction.type)}
                             </p>
                             <p className="text-sm text-slate-500">
                               {transaction.createdAt}
@@ -315,22 +380,24 @@ const  [range, setRange] = useState("today")
                           </div>
 
                           <p
-                            className={`font-semibold ${
-                              transaction.type === "payment"
-                                ? "text-emerald-600"
-                                : transaction.type === "sale"
-                                ? "text-red-600"
-                                : "text-amber-600"
-                            }`}
+                            className={`font-semibold ${getTransactionAmountColor(
+                              transaction.type,
+                            )}`}
                           >
-                            {transaction.type === "payment" ? "-" : "+"}₦
+                            {getTransactionAmountPrefix(transaction.type)}₦
                             {transaction.amount.toLocaleString()}
                           </p>
                         </div>
 
-                        {transaction.note ? (
+                        {transaction.description ? (
                           <p className="mt-2 text-sm text-slate-600">
-                            {transaction.note}
+                            {transaction.description}
+                          </p>
+                        ) : null}
+
+                        {transaction.reference ? (
+                          <p className="mt-1 text-xs text-slate-500">
+                            Ref: {transaction.reference}
                           </p>
                         ) : null}
                       </div>
@@ -370,7 +437,7 @@ const  [range, setRange] = useState("today")
             <div className="mb-5 rounded-2xl bg-slate-50 p-4">
               <p className="text-sm text-slate-500">Current Outstanding</p>
               <p className="mt-1 text-xl font-bold text-red-600">
-                ₦{paymentTarget.totalDebt.toLocaleString()}
+                ₦{paymentTarget.balance.toLocaleString()}
               </p>
             </div>
 
@@ -441,7 +508,7 @@ const  [range, setRange] = useState("today")
             <div className="mb-5 rounded-2xl bg-slate-50 p-4">
               <p className="text-sm text-slate-500">Current Outstanding</p>
               <p className="mt-1 text-xl font-bold text-red-600">
-                ₦{adjustmentTarget.totalDebt.toLocaleString()}
+                ₦{adjustmentTarget.balance.toLocaleString()}
               </p>
             </div>
 

@@ -1,6 +1,5 @@
+import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
-
-type PaymentStatus = "paid" | "partial" | "owed";
 
 type GetSalesFilters = {
   startDate?: Date;
@@ -12,7 +11,6 @@ type CreateSaleWithInventoryInput = {
   subtotal: number;
   amountPaid: number;
   balance: number;
-  paymentStatus: PaymentStatus;
   items: Array<{
     productId: string;
     productSaleUnitId: string;
@@ -21,6 +19,24 @@ type CreateSaleWithInventoryInput = {
     total: number;
     baseUnitsConsumed: number;
   }>;
+};
+
+function toDecimal(value: number) {
+  return new Prisma.Decimal(value.toFixed(2));
+}
+
+type ProductRow = {
+  id: string;
+  name: string;
+  stock: number;
+  currentCostPrice: Prisma.Decimal | null;
+};
+
+type SaleUnitRow = {
+  id: string;
+  productId: string;
+  quantityInBaseUnit: number;
+  unitId: string;
 };
 
 export async function getSales(filters: GetSalesFilters = {}) {
@@ -42,7 +58,7 @@ export async function getSales(filters: GetSalesFilters = {}) {
               owner: true,
             },
           },
-          productSaleUnit: {
+          saleUnit: {
             include: {
               unit: true,
             },
@@ -59,217 +75,331 @@ export async function getSales(filters: GetSalesFilters = {}) {
 export async function createSaleWithInventory(
   input: CreateSaleWithInventoryInput,
 ) {
-  return prisma.$transaction(async (tx) => {
-    const groupedByProduct = new Map<string, number>();
+  const groupedByProduct = new Map<string, number>();
 
-    for (const item of input.items) {
-      const current = groupedByProduct.get(item.productId) ?? 0;
-      groupedByProduct.set(item.productId, current + item.baseUnitsConsumed);
-    }
+  for (const item of input.items) {
+    groupedByProduct.set(
+      item.productId,
+      (groupedByProduct.get(item.productId) ?? 0) + item.baseUnitsConsumed,
+    );
+  }
 
-    for (const item of input.items) {
-      const saleUnit = await tx.productSaleUnit.findUnique({
-        where: { id: item.productSaleUnitId },
-        include: {
-          product: {
-            select: {
-              id: true,
-              name: true,
-              stock: true,
-              unitId: true,
-              costPrice: true,
-            },
-          },
-          unit: {
-            select: {
-              id: true,
-              name: true,
-            },
+  const productIds = [...new Set(input.items.map((item) => item.productId))];
+  const saleUnitIds = [
+    ...new Set(input.items.map((item) => item.productSaleUnitId)),
+  ];
+
+  const [products, saleUnits]: [ProductRow[], SaleUnitRow[]] =
+    await Promise.all([
+      prisma.product.findMany({
+        where: {
+          id: {
+            in: productIds,
           },
         },
-      });
-
-      if (!saleUnit) {
-        throw new Error("Invalid sale unit");
-      }
-
-      if (saleUnit.productId !== item.productId) {
-        throw new Error("Invalid sale unit for selected product");
-      }
-
-      const expectedBaseUnits = saleUnit.quantityInBaseUnit * item.quantity;
-
-      if (expectedBaseUnits !== item.baseUnitsConsumed) {
-        throw new Error(
-          `Base unit mismatch for ${saleUnit.product.name}. Expected ${expectedBaseUnits}, got ${item.baseUnitsConsumed}`,
-        );
-      }
-    }
-
-    const productMap = new Map<
-      string,
-      {
-        id: string;
-        name: string;
-        stock: number;
-        costPrice: number;
-        unitName: string;
-      }
-    >();
-
-    for (const [productId, totalBaseUnitsConsumed] of groupedByProduct) {
-      const product = await tx.product.findUnique({
-        where: { id: productId },
         select: {
           id: true,
           name: true,
           stock: true,
-          costPrice: true,
-          unit: {
-            select: {
-              name: true,
-            },
+          currentCostPrice: true,
+        },
+      }),
+      prisma.productSaleUnit.findMany({
+        where: {
+          id: {
+            in: saleUnitIds,
           },
         },
-      });
+        select: {
+          id: true,
+          productId: true,
+          quantityInBaseUnit: true,
+          unitId: true,
+        },
+      }),
+    ]);
 
-      if (!product) {
-        throw new Error("Product not found");
-      }
-
-      if (product.stock < totalBaseUnitsConsumed) {
-        throw new Error(
-          `Not enough stock for ${product.name}. Available base stock is ${product.stock} ${product.unit.name}.`,
-        );
-      }
-
-      productMap.set(productId, {
+  const productMap = new Map(
+    products.map((product: ProductRow) => [
+      product.id,
+      {
         id: product.id,
         name: product.name,
         stock: product.stock,
-        costPrice: Number(product.costPrice ?? 0),
-        unitName: product.unit.name,
-      });
+        currentCostPrice: Number(product.currentCostPrice ?? 0),
+      },
+    ]),
+  );
+
+  const saleUnitMap = new Map(
+    saleUnits.map((saleUnit: SaleUnitRow) => [
+      saleUnit.id,
+      {
+        id: saleUnit.id,
+        productId: saleUnit.productId,
+        quantityInBaseUnit: saleUnit.quantityInBaseUnit,
+        unitId: saleUnit.unitId,
+      },
+    ]),
+  );
+
+  for (const item of input.items) {
+    const saleUnit = saleUnitMap.get(item.productSaleUnitId);
+    if (!saleUnit) {
+      throw new Error("Invalid sale unit");
     }
 
-    const sale = await tx.sale.create({
-      data: {
-        customerName: input.customerName || "Walk-in Customer",
-        subtotal: input.subtotal,
-        amountPaid: input.amountPaid,
-        balance: input.balance,
-        paymentStatus: input.paymentStatus,
-        items: {
-          create: input.items.map((item) => {
-            const product = productMap.get(item.productId);
+    if (saleUnit.productId !== item.productId) {
+      throw new Error("Invalid sale unit for selected product");
+    }
 
-            if (!product) {
-              throw new Error("Product cost data not found");
-            }
+    const product = productMap.get(item.productId);
+    if (!product) {
+      throw new Error("Product not found");
+    }
 
-            const costPricePerBaseUnit = product.costPrice;
-            const costTotal = costPricePerBaseUnit * item.baseUnitsConsumed;
-            const profit = item.total - costTotal;
+    const expectedBaseUnits = saleUnit.quantityInBaseUnit * item.quantity;
+    if (expectedBaseUnits !== item.baseUnitsConsumed) {
+      throw new Error(
+        `Base unit mismatch for ${product.name}. Expected ${expectedBaseUnits}, got ${item.baseUnitsConsumed}`,
+      );
+    }
+  }
 
-            return {
-              productId: item.productId,
-              productSaleUnitId: item.productSaleUnitId,
-              quantity: item.quantity,
-              unitPrice: item.unitPrice,
-              total: item.total,
-              baseUnitsConsumed: item.baseUnitsConsumed,
-              costPricePerBaseUnit,
-              costTotal,
-              profit,
-            };
-          }),
+  for (const [productId, totalBaseUnitsConsumed] of groupedByProduct) {
+    const product = productMap.get(productId);
+
+    if (!product) {
+      throw new Error("Product not found");
+    }
+
+    if (product.stock < totalBaseUnitsConsumed) {
+      throw new Error(
+        `Not enough stock for ${product.name}. Available base stock is ${product.stock}.`,
+      );
+    }
+  }
+
+  const normalizedCustomerName =
+    input.customerName?.trim() || "Walk-in Customer";
+
+  return prisma.$transaction(
+    async (tx) => {
+      const sale = await tx.sale.create({
+        data: {
+          customerName: normalizedCustomerName,
+          subtotal: toDecimal(input.subtotal),
+          amountPaid: toDecimal(input.amountPaid),
+          balance: toDecimal(input.balance),
+          items: {
+            create: input.items.map((item) => {
+              const product = productMap.get(item.productId);
+
+              if (!product) {
+                throw new Error("Product cost data not found");
+              }
+
+              const unitCostPrice = product.currentCostPrice;
+              const lineCostTotal = unitCostPrice * item.baseUnitsConsumed;
+              const lineProfit = item.total - lineCostTotal;
+
+              return {
+                productId: item.productId,
+                saleUnitId: item.productSaleUnitId,
+                quantity: item.quantity,
+                quantityInBaseUnit: item.baseUnitsConsumed,
+                unitPrice: toDecimal(item.unitPrice),
+                lineTotal: toDecimal(item.total),
+                unitCostPrice: toDecimal(unitCostPrice),
+                lineCostTotal: toDecimal(lineCostTotal),
+                lineProfit: toDecimal(lineProfit),
+              };
+            }),
+          },
         },
-      },
-      include: {
-        items: {
-          include: {
-            product: {
-              include: {
-                owner: true,
+        include: {
+          items: {
+            include: {
+              product: {
+                include: {
+                  owner: true,
+                },
               },
-            },
-            productSaleUnit: {
-              include: {
-                unit: true,
+              saleUnit: {
+                include: {
+                  unit: true,
+                },
               },
             },
           },
         },
-      },
-    });
-
-    for (const [productId, totalBaseUnitsConsumed] of groupedByProduct) {
-      await tx.stockMovement.create({
-        data: {
-          productId,
-          type: "sale",
-          quantity: -totalBaseUnitsConsumed,
-          note: `Sale ${sale.id}`,
-        },
       });
 
-      await tx.product.update({
-        where: { id: productId },
-        data: {
-          stock: {
-            decrement: totalBaseUnitsConsumed,
-          },
-        },
-      });
-    }
+      await Promise.all(
+        [...groupedByProduct.entries()].flatMap(
+          ([productId, totalBaseUnitsConsumed]) => [
+            tx.stockMovement.create({
+              data: {
+                productId,
+                type: "OUT",
+                quantity: totalBaseUnitsConsumed,
+                note: `Sale ${sale.id}`,
+              },
+            }),
+            tx.product.update({
+              where: { id: productId },
+              data: {
+                stock: {
+                  decrement: totalBaseUnitsConsumed,
+                },
+              },
+            }),
+          ],
+        ),
+      );
 
-    if (
-      (input.paymentStatus === "partial" || input.paymentStatus === "owed") &&
-      input.balance > 0
-    ) {
-      const customerName = input.customerName?.trim() || "Walk-in Customer";
-
-      const existingDebt = await tx.customerDebt.findUnique({
-        where: {
-          customerName,
-        },
-      });
-
-      if (existingDebt) {
-        await tx.customerDebt.update({
+      if (input.balance > 0) {
+        let existingDebt = await tx.customerDebt.findFirst({
           where: {
-            id: existingDebt.id,
-          },
-          data: {
-            totalDebt: {
-              increment: input.balance,
-            },
-            transactions: {
-              create: {
-                type: "sale",
-                amount: input.balance,
-                note: `Debt added from sale ${sale.id}`,
-              },
+            customerName: {
+              equals: normalizedCustomerName,
+              mode: "insensitive",
             },
           },
         });
-      } else {
-        await tx.customerDebt.create({
-          data: {
-            customerName,
-            totalDebt: input.balance,
-            transactions: {
-              create: {
-                type: "sale",
-                amount: input.balance,
-                note: `Debt added from sale ${sale.id}`,
-              },
+
+        if (!existingDebt) {
+          existingDebt = await tx.customerDebt.create({
+            data: {
+              customerName: normalizedCustomerName,
+              balance: toDecimal(0),
             },
+          });
+        }
+
+        await tx.customerDebt.update({
+          where: { id: existingDebt.id },
+          data: {
+            balance: {
+              increment: toDecimal(input.balance),
+            },
+          },
+        });
+
+        await tx.debtTransaction.create({
+          data: {
+            customerDebtId: existingDebt.id,
+            saleId: sale.id,
+            type: "SALE_DEBT",
+            amount: toDecimal(input.balance),
+            description: `Debt from sale ${sale.id}`,
+            reference: sale.id,
           },
         });
       }
-    }
 
-    return sale;
+      return sale;
+    },
+    {
+      maxWait: 15000,
+      timeout: 20000,
+    },
+  );
+}
+
+export async function getTodaySaleItems() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+
+  return prisma.saleItem.findMany({
+    where: {
+      sale: {
+        createdAt: {
+          gte: start,
+          lte: end,
+        },
+      },
+    },
+    include: {
+      product: true,
+      saleUnit: {
+        include: {
+          unit: true,
+        },
+      },
+      sale: true,
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
   });
+}
+
+export async function getTodaySalesSummary() {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+
+  const [saleItems, sales] = await Promise.all([
+    prisma.saleItem.findMany({
+      where: {
+        sale: {
+          createdAt: {
+            gte: start,
+            lte: end,
+          },
+        },
+      },
+      select: {
+        quantity: true,
+        lineTotal: true,
+        lineProfit: true,
+        sale: {
+          select: {
+            balance: true,
+          },
+        },
+      },
+    }),
+    prisma.sale.findMany({
+      where: {
+        createdAt: {
+          gte: start,
+          lte: end,
+        },
+      },
+      select: {
+        id: true,
+      },
+    }),
+  ]);
+
+  const totals = saleItems.reduce(
+    (acc, item) => {
+      acc.revenue += Number(item.lineTotal);
+      acc.profit += Number(item.lineProfit ?? 0);
+      acc.itemsSold += item.quantity;
+      acc.balance += Number(item.sale.balance);
+      return acc;
+    },
+    {
+      revenue: 0,
+      profit: 0,
+      itemsSold: 0,
+      balance: 0,
+    },
+  );
+
+  return {
+    salesCount: sales.length,
+    revenue: totals.revenue,
+    profit: totals.profit,
+    itemsSold: totals.itemsSold,
+    balance: totals.balance,
+  };
 }

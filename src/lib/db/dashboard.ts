@@ -47,7 +47,7 @@ export async function getDashboardData(filters?: DashboardFilter) {
                 owner: true,
               },
             },
-            productSaleUnit: {
+            saleUnit: {
               include: {
                 unit: true,
               },
@@ -73,7 +73,7 @@ export async function getDashboardData(filters?: DashboardFilter) {
           orderBy: { createdAt: "desc" },
         },
       },
-      orderBy: { totalDebt: "desc" },
+      orderBy: { balance: "desc" },
     }),
   ]);
 

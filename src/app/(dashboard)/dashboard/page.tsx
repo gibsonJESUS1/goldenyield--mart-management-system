@@ -23,7 +23,7 @@ type RecentSale = {
   id: string;
   customerName: string;
   subtotal: number;
-  paymentStatus: "paid" | "partial" | "owed";
+  balance: number;
 };
 
 type TopProduct = {
@@ -40,6 +40,11 @@ type OwnerSummary = {
   salesAmount: number;
   profitAmount: number;
 };
+
+function toSafeNumber(value: unknown) {
+  const num = Number(value ?? 0);
+  return Number.isFinite(num) ? num : 0;
+}
 
 function getDateRange(range: string | undefined) {
   const now = new Date();
@@ -85,14 +90,14 @@ async function getDashboardView(range: string | undefined) {
 
   sales.forEach((sale) => {
     sale.items.forEach((item) => {
-      totalRevenue += Number(item.total);
-      totalCost += Number(item.costTotal ?? 0);
-      totalProfit += Number(item.profit ?? 0);
+      totalRevenue += toSafeNumber(item.lineTotal);
+      totalCost += toSafeNumber(item.lineCostTotal);
+      totalProfit += toSafeNumber(item.lineProfit);
     });
   });
 
   const outstandingDebts = debts.reduce(
-    (sum, debt) => sum + Number(debt.totalDebt),
+    (sum, debt) => sum + toSafeNumber(debt.balance),
     0,
   );
 
@@ -100,9 +105,7 @@ async function getDashboardView(range: string | undefined) {
     (product) => product.stock > 0 && product.stock <= product.lowStock,
   ).length;
 
-  const outOfStockItems = products.filter(
-    (product) => product.stock === 0,
-  ).length;
+  const outOfStockItems = products.filter((product) => product.stock === 0).length;
 
   const profitMargin =
     totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
@@ -129,12 +132,12 @@ async function getDashboardView(range: string | undefined) {
         .filter((item) => item.product.ownerId === owner.id);
 
       const salesAmount = ownerItems.reduce(
-        (sum, item) => sum + Number(item.total),
+        (sum, item) => sum + toSafeNumber(item.lineTotal),
         0,
       );
 
       const profitAmount = ownerItems.reduce(
-        (sum, item) => sum + Number(item.profit ?? 0),
+        (sum, item) => sum + toSafeNumber(item.lineProfit),
         0,
       );
 
@@ -151,8 +154,8 @@ async function getDashboardView(range: string | undefined) {
   const recentSales: RecentSale[] = sales.slice(0, 3).map((sale) => ({
     id: sale.id,
     customerName: sale.customerName || "Walk-in Customer",
-    subtotal: Number(sale.subtotal),
-    paymentStatus: sale.paymentStatus,
+    subtotal: toSafeNumber(sale.subtotal),
+    balance: toSafeNumber(sale.balance),
   }));
 
   const productRevenueMap = new Map<
@@ -165,15 +168,15 @@ async function getDashboardView(range: string | undefined) {
       const existing = productRevenueMap.get(item.productId);
 
       if (existing) {
-        existing.revenue += Number(item.total);
+        existing.revenue += toSafeNumber(item.lineTotal);
         existing.quantity += item.quantity;
-        existing.profit += Number(item.profit ?? 0);
+        existing.profit += toSafeNumber(item.lineProfit);
       } else {
         productRevenueMap.set(item.productId, {
           name: item.product.name,
-          revenue: Number(item.total),
+          revenue: toSafeNumber(item.lineTotal),
           quantity: item.quantity,
-          profit: Number(item.profit ?? 0),
+          profit: toSafeNumber(item.lineProfit),
         });
       }
     });
@@ -400,14 +403,12 @@ export default async function DashboardPage({
                       {sale.customerName}
                     </p>
                     <p
-                      className={`mt-1 text-sm font-medium capitalize ${sale.paymentStatus === "paid"
+                      className={`mt-1 text-sm font-medium ${sale.balance <= 0
                           ? "text-emerald-600"
-                          : sale.paymentStatus === "partial"
-                            ? "text-amber-600"
-                            : "text-red-600"
+                          : "text-amber-600"
                         }`}
                     >
-                      {sale.paymentStatus}
+                      {sale.balance <= 0 ? "Paid" : "Outstanding"}
                     </p>
                   </div>
 

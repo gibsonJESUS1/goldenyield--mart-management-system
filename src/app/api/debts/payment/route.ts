@@ -3,35 +3,78 @@ import { recordDebtPayment } from "@/lib/db/debt";
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as {
-      customerName: string;
-      amount: number;
-    };
+    const body = await request.json();
 
-    if (
-      !body.customerName ||
-      typeof body.amount !== "number" ||
-      body.amount <= 0
-    ) {
+    const customerDebtId =
+      typeof body.customerDebtId === "string" ? body.customerDebtId.trim() : "";
+    const amount = Number(body.amount);
+    const note = typeof body.note === "string" ? body.note.trim() : undefined;
+    const reference =
+      typeof body.reference === "string" ? body.reference.trim() : undefined;
+
+    if (!customerDebtId) {
       return NextResponse.json(
-        { error: "Invalid payment payload" },
+        { message: "customerDebtId is required" },
         { status: 400 },
       );
     }
 
-    const updatedDebt = await recordDebtPayment(body.customerName, body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return NextResponse.json(
+        { message: "Amount must be greater than 0" },
+        { status: 400 },
+      );
+    }
 
-    return NextResponse.json({
-      id: updatedDebt.id,
-      customerName: updatedDebt.customerName,
-      totalDebt: Number(updatedDebt.totalDebt),
-      createdAt: updatedDebt.createdAt,
-      updatedAt: updatedDebt.updatedAt,
+    const debt = await recordDebtPayment({
+      customerDebtId,
+      amount,
+      note,
+      reference,
     });
+
+    if (!debt) {
+      return NextResponse.json(
+        { message: "Failed to record payment" },
+        { status: 500 },
+      );
+    }
+
+    const normalized = {
+      id: debt.id,
+      customerName: debt.customerName,
+      phone: debt.phone,
+      note: debt.note,
+      balance: Number(debt.balance),
+      createdAt: debt.createdAt,
+      updatedAt: debt.updatedAt,
+      transactions: debt.transactions.map((transaction) => ({
+        id: transaction.id,
+        customerDebtId: transaction.customerDebtId,
+        saleId: transaction.saleId,
+        type: transaction.type,
+        amount: Number(transaction.amount),
+        description: transaction.description,
+        reference: transaction.reference,
+        createdAt: transaction.createdAt,
+      })),
+    };
+
+    return NextResponse.json(
+      {
+        message: "Payment recorded successfully",
+        debt: normalized,
+      },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("POST /api/debts/payment error:", error);
+
     return NextResponse.json(
-      { error: "Failed to record debt payment" },
+      {
+        message:
+          error instanceof Error ? error.message : "Failed to record payment",
+      },
       { status: 500 },
     );
   }

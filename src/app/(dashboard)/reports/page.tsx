@@ -25,6 +25,11 @@ type TopProductPerformance = {
   profit: number;
 };
 
+function toSafeNumber(value: unknown) {
+  const num = Number(value ?? 0);
+  return Number.isFinite(num) ? num : 0;
+}
+
 function getDateRange(range: string | undefined) {
   const now = new Date();
 
@@ -79,22 +84,21 @@ async function getReportsView(range: string | undefined) {
 
   sales.forEach((sale) => {
     sale.items.forEach((item) => {
-      totalRevenue += Number(item.total);
-      totalCost += Number(item.costTotal ?? 0);
-      totalProfit += Number(item.profit ?? 0);
+      totalRevenue += toSafeNumber(item.lineTotal);
+      totalCost += toSafeNumber(item.lineCostTotal);
+      totalProfit += toSafeNumber(item.lineProfit);
     });
   });
 
   const totalOutstanding = debts.reduce(
-    (sum, debt) => sum + Number(debt.totalDebt),
+    (sum, debt) => sum + toSafeNumber(debt.balance),
     0,
   );
 
-  const paidSales = sales.filter((sale) => sale.paymentStatus === "paid").length;
-  const partialSales = sales.filter(
-    (sale) => sale.paymentStatus === "partial",
+  const paidSales = sales.filter((sale) => toSafeNumber(sale.balance) <= 0).length;
+  const partialOrOwed = sales.filter(
+    (sale) => toSafeNumber(sale.balance) > 0,
   ).length;
-  const owedSales = sales.filter((sale) => sale.paymentStatus === "owed").length;
 
   const ownerSummary: OwnerPerformance[] = owners
     .map((owner) => {
@@ -105,12 +109,12 @@ async function getReportsView(range: string | undefined) {
         .filter((item) => item.product.ownerId === owner.id);
 
       const ownerSales = ownerItems.reduce(
-        (sum, item) => sum + Number(item.total),
+        (sum, item) => sum + toSafeNumber(item.lineTotal),
         0,
       );
 
       const ownerProfit = ownerItems.reduce(
-        (sum, item) => sum + Number(item.profit ?? 0),
+        (sum, item) => sum + toSafeNumber(item.lineProfit),
         0,
       );
 
@@ -132,16 +136,16 @@ async function getReportsView(range: string | undefined) {
 
       if (existing) {
         existing.sold += item.quantity;
-        existing.revenue += Number(item.total);
-        existing.cost += Number(item.costTotal ?? 0);
-        existing.profit += Number(item.profit ?? 0);
+        existing.revenue += toSafeNumber(item.lineTotal);
+        existing.cost += toSafeNumber(item.lineCostTotal);
+        existing.profit += toSafeNumber(item.lineProfit);
       } else {
         productMap.set(item.productId, {
           name: item.product.name,
           sold: item.quantity,
-          revenue: Number(item.total),
-          cost: Number(item.costTotal ?? 0),
-          profit: Number(item.profit ?? 0),
+          revenue: toSafeNumber(item.lineTotal),
+          cost: toSafeNumber(item.lineCostTotal),
+          profit: toSafeNumber(item.lineProfit),
         });
       }
     });
@@ -173,8 +177,7 @@ async function getReportsView(range: string | undefined) {
     profitMargin,
     totalOutstanding,
     paidSales,
-    partialSales,
-    owedSales,
+    partialOrOwed,
     ownerSummary,
     topProducts,
     lowStockSummary,
@@ -246,7 +249,7 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
         />
         <SummaryCard
           title="Partial / Owed"
-          value={data.partialSales + data.owedSales}
+          value={data.partialOrOwed}
           note="Needs payment follow-up"
         />
       </section>

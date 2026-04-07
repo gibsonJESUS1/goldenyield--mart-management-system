@@ -3,43 +3,90 @@ import { adjustDebt } from "@/lib/db/debt";
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as {
-      customerName: string;
-      amount: number;
-      mode: "increase" | "decrease";
-      note?: string;
-    };
+    const body = await request.json();
 
-    if (
-      !body.customerName ||
-      typeof body.amount !== "number" ||
-      body.amount <= 0 ||
-      (body.mode !== "increase" && body.mode !== "decrease")
-    ) {
+    const customerDebtId =
+      typeof body.customerDebtId === "string" ? body.customerDebtId.trim() : "";
+    const amount = Number(body.amount);
+    const direction =
+      body.direction === "increase" || body.direction === "decrease"
+        ? body.direction
+        : null;
+    const note = typeof body.note === "string" ? body.note.trim() : undefined;
+    const reference =
+      typeof body.reference === "string" ? body.reference.trim() : undefined;
+
+    if (!customerDebtId) {
       return NextResponse.json(
-        { error: "Invalid adjustment payload" },
+        { message: "customerDebtId is required" },
         { status: 400 },
       );
     }
 
-    const updatedDebt = await adjustDebt(
-      body.customerName,
-      body.amount,
-      body.mode,
-      body.note,
-    );
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return NextResponse.json(
+        { message: "Amount must be greater than 0" },
+        { status: 400 },
+      );
+    }
 
-    return NextResponse.json({
-      id: updatedDebt.id,
-      customerName: updatedDebt.customerName,
-      totalDebt: Number(updatedDebt.totalDebt),
-      createdAt: updatedDebt.createdAt,
-      updatedAt: updatedDebt.updatedAt,
+    if (!direction) {
+      return NextResponse.json(
+        { message: "direction must be 'increase' or 'decrease'" },
+        { status: 400 },
+      );
+    }
+
+    const debt = await adjustDebt({
+      customerDebtId,
+      amount,
+      direction,
+      note,
+      reference,
     });
+
+    if (!debt) {
+      return NextResponse.json(
+        { message: "Failed to adjust debt" },
+        { status: 500 },
+      );
+    }
+
+    const normalized = {
+      id: debt.id,
+      customerName: debt.customerName,
+      phone: debt.phone,
+      note: debt.note,
+      balance: Number(debt.balance),
+      createdAt: debt.createdAt,
+      updatedAt: debt.updatedAt,
+      transactions: debt.transactions.map((transaction) => ({
+        id: transaction.id,
+        customerDebtId: transaction.customerDebtId,
+        saleId: transaction.saleId,
+        type: transaction.type,
+        amount: Number(transaction.amount),
+        description: transaction.description,
+        reference: transaction.reference,
+        createdAt: transaction.createdAt,
+      })),
+    };
+
+    return NextResponse.json(
+      {
+        message: "Debt adjusted successfully",
+        debt: normalized,
+      },
+      { status: 200 },
+    );
   } catch (error) {
     console.error("POST /api/debts/adjustment error:", error);
+
     return NextResponse.json(
-      { error: "Failed to adjust debt" },
+      {
+        message:
+          error instanceof Error ? error.message : "Failed to adjust debt",
+      },
       { status: 500 },
     );
   }
