@@ -71,6 +71,37 @@ type SalesRequestItem = {
   baseUnitsConsumed: number;
 };
 
+type SalesRequestBody = {
+  customerName?: string;
+  subtotal: number;
+  amountPaid: number;
+  balance: number;
+  items: SalesRequestItem[];
+};
+
+function isValidSalesRequestItem(item: unknown): item is SalesRequestItem {
+  if (!item || typeof item !== "object") {
+    return false;
+  }
+
+  const candidate = item as Partial<SalesRequestItem>;
+
+  return (
+    typeof candidate.productId === "string" &&
+    candidate.productId.trim().length > 0 &&
+    typeof candidate.productSaleUnitId === "string" &&
+    candidate.productSaleUnitId.trim().length > 0 &&
+    Number.isFinite(Number(candidate.quantity)) &&
+    Number(candidate.quantity) > 0 &&
+    Number.isFinite(Number(candidate.unitPrice)) &&
+    Number(candidate.unitPrice) >= 0 &&
+    Number.isFinite(Number(candidate.total)) &&
+    Number(candidate.total) >= 0 &&
+    Number.isFinite(Number(candidate.baseUnitsConsumed)) &&
+    Number(candidate.baseUnitsConsumed) > 0
+  );
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -123,7 +154,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const body = (await request.json()) as Partial<SalesRequestBody>;
 
     if (!Array.isArray(body.items) || body.items.length === 0) {
       return NextResponse.json(
@@ -132,36 +163,34 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!Number.isFinite(body.subtotal) || body.subtotal < 0) {
+    if (!Number.isFinite(Number(body.subtotal)) || Number(body.subtotal) < 0) {
       return NextResponse.json({ error: "Invalid subtotal" }, { status: 400 });
     }
 
-    if (!Number.isFinite(body.amountPaid) || body.amountPaid < 0) {
+    if (
+      !Number.isFinite(Number(body.amountPaid)) ||
+      Number(body.amountPaid) < 0
+    ) {
       return NextResponse.json(
         { error: "Invalid amount paid" },
         { status: 400 },
       );
     }
 
-    if (!Number.isFinite(body.balance) || body.balance < 0) {
+    if (!Number.isFinite(Number(body.balance)) || Number(body.balance) < 0) {
       return NextResponse.json({ error: "Invalid balance" }, { status: 400 });
     }
 
     const invalidItem = body.items.find(
-      (item: unknown) =>
-        !item ||
-        typeof item !== "object" ||
-        !("productId" in item) ||
-        !("productSaleUnitId" in item) ||
-        !("quantity" in item) ||
-        !("unitPrice" in item) ||
-        !("total" in item) ||
-        !("baseUnitsConsumed" in item),
+      (item) => !isValidSalesRequestItem(item),
     );
 
     if (invalidItem) {
       return NextResponse.json(
-        { error: "One or more sale items are invalid" },
+        {
+          error:
+            "One or more sale items are invalid. Ensure product, unit, quantity, price, total, and base unit conversion are valid.",
+        },
         { status: 400 },
       );
     }
@@ -171,7 +200,7 @@ export async function POST(request: Request) {
       subtotal: Number(body.subtotal),
       amountPaid: Number(body.amountPaid),
       balance: Number(body.balance),
-      items: body.items.map((item: SalesRequestItem) => ({
+      items: body.items.map((item) => ({
         productId: item.productId,
         productSaleUnitId: item.productSaleUnitId,
         quantity: Number(item.quantity),

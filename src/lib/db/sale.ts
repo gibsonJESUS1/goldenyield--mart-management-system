@@ -22,6 +22,10 @@ type CreateSaleWithInventoryInput = {
 };
 
 function toDecimal(value: number) {
+  if (!Number.isFinite(value)) {
+    return new Prisma.Decimal(0);
+  }
+
   return new Prisma.Decimal(value.toFixed(2));
 }
 
@@ -78,6 +82,13 @@ export async function createSaleWithInventory(
   const groupedByProduct = new Map<string, number>();
 
   for (const item of input.items) {
+    if (
+      !Number.isFinite(item.baseUnitsConsumed) ||
+      item.baseUnitsConsumed <= 0
+    ) {
+      throw new Error("Invalid base unit quantity");
+    }
+
     groupedByProduct.set(
       item.productId,
       (groupedByProduct.get(item.productId) ?? 0) + item.baseUnitsConsumed,
@@ -126,7 +137,10 @@ export async function createSaleWithInventory(
         id: product.id,
         name: product.name,
         stock: product.stock,
-        currentCostPrice: Number(product.currentCostPrice ?? 0),
+        currentCostPrice:
+          product.currentCostPrice != null
+            ? Number(product.currentCostPrice)
+            : null,
       },
     ]),
   );
@@ -199,7 +213,8 @@ export async function createSaleWithInventory(
                 throw new Error("Product cost data not found");
               }
 
-              const unitCostPrice = product.currentCostPrice;
+              const rawUnitCostPrice = product.currentCostPrice;
+              const unitCostPrice = rawUnitCostPrice ?? 0;
               const lineCostTotal = unitCostPrice * item.baseUnitsConsumed;
               const lineProfit = item.total - lineCostTotal;
 
