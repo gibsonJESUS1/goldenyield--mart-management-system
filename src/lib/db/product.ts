@@ -148,60 +148,168 @@ export async function createProduct(data: CreateProductInput) {
 }
 
 export async function updateProduct(id: string, data: UpdateProductInput) {
-  await prisma.productSaleUnitPriceRule.deleteMany({
-    where: {
-      productSaleUnit: {
-        productId: id,
+  return prisma.$transaction(async (tx) => {
+    const existingProduct = await tx.product.findUnique({
+      where: { id },
+      include: {
+        saleUnits: {
+          include: {
+            priceRules: true,
+          },
+        },
       },
-    },
-  });
+    });
 
-  await prisma.productSaleUnit.deleteMany({
-    where: { productId: id },
-  });
+    if (!existingProduct) {
+      throw new Error("Product not found");
+    }
 
-  return prisma.product.update({
-    where: { id },
-    data: {
-      name: data.name,
-      ownerId: data.ownerId,
-      categoryId: data.categoryId,
-      unitId: data.unitId,
-      stock: data.stock,
-      lowStock: data.lowStock,
-      active: data.active ?? true,
-      saleUnits: {
-        create: data.saleUnits.map((saleUnit) => ({
-          unitId: saleUnit.unitId,
-          quantityInBaseUnit: saleUnit.quantityInBaseUnit,
+    const existingSaleUnits = existingProduct.saleUnits;
+    const existingSaleUnitIds = new Set(
+      existingSaleUnits.map((unit) => unit.id),
+    );
+
+    const incomingSaleUnitIds = new Set(
+      data.saleUnits
+        .map((unit) => unit.id)
+        .filter((unitId): unitId is string => Boolean(unitId)),
+    );
+
+    const removedSaleUnits = existingSaleUnits.filter(
+      (unit) => !incomingSaleUnitIds.has(unit.id),
+    );
+
+    await tx.product.update({
+      where: { id },
+      data: {
+        name: data.name,
+        ownerId: data.ownerId,
+        categoryId: data.categoryId,
+        unitId: data.unitId,
+        stock: data.stock,
+        lowStock: data.lowStock,
+        active: data.active ?? true,
+      },
+    });
+
+    for (const saleUnit of data.saleUnits) {
+      if (saleUnit.id && existingSaleUnitIds.has(saleUnit.id)) {
+        const usageCount = await tx.saleItem.count({
+          where: {
+            saleUnitId: saleUnit.id,
+          },
+        });
+
+        const updateData: {
+          unitId?: string;
+          quantityInBaseUnit?: number;
+          sellingPrice: number;
+          isDefault: boolean;
+          active: boolean;
+        } = {
           sellingPrice: saleUnit.sellingPrice,
           isDefault: saleUnit.isDefault ?? false,
           active: saleUnit.active ?? true,
-          ...(saleUnit.priceRules && saleUnit.priceRules.length > 0
-            ? {
-                priceRules: {
-                  create: saleUnit.priceRules.map((rule) => ({
-                    quantity: rule.quantity,
-                    price: rule.price,
-                    active: rule.active ?? true,
-                  })),
-                },
-              }
-            : {}),
-        })),
-      },
-    },
-    include: {
-      owner: true,
-      category: true,
-      unit: true,
-      saleUnits: {
-        include: {
-          unit: true,
-          priceRules: true,
+        };
+
+        if (usageCount === 0) {
+          updateData.unitId = saleUnit.unitId;
+          updateData.quantityInBaseUnit = saleUnit.quantityInBaseUnit;
+        }
+
+        await tx.productSaleUnit.update({
+          where: { id: saleUnit.id },
+          data: updateData,
+        });
+
+        await tx.productSaleUnitPriceRule.deleteMany({
+          where: {
+            productSaleUnitId: saleUnit.id,
+          },
+        });
+
+        if (saleUnit.priceRules && saleUnit.priceRules.length > 0) {
+          await tx.productSaleUnitPriceRule.createMany({
+            data: saleUnit.priceRules.map((rule) => ({
+              productSaleUnitId: saleUnit.id!,
+              quantity: rule.quantity,
+              price: rule.price,
+              active: rule.active ?? true,
+            })),
+          });
+        }
+      } else {
+        await tx.productSaleUnit.create({
+          data: {
+            productId: id,
+            unitId: saleUnit.unitId,
+            quantityInBaseUnit: saleUnit.quantityInBaseUnit,
+            sellingPrice: saleUnit.sellingPrice,
+            isDefault: saleUnit.isDefault ?? false,
+            active: saleUnit.active ?? true,
+            ...(saleUnit.priceRules && saleUnit.priceRules.length > 0
+              ? {
+                  priceRules: {
+                    create: saleUnit.priceRules.map((rule) => ({
+                      quantity: rule.quantity,
+                      price: rule.price,
+                      active: rule.active ?? true,
+                    })),
+                  },
+                }
+              : {}),
+          },
+        });
+      }
+    }
+
+    for (const removedSaleUnit of removedSaleUnits) {
+      const usageCount = await tx.saleItem.count({
+        where: {
+          saleUnitId: removedSaleUnit.id,
+        },
+      });
+
+      if (usageCount === 0) {
+        await tx.productSaleUnitPriceRule.deleteMany({
+          where: {
+            productSaleUnitId: removedSaleUnit.id,
+          },
+        });
+
+        await tx.productSaleUnit.delete({
+          where: {
+            id: removedSaleUnit.id,
+          },
+        });
+      } else {
+        await tx.productSaleUnit.update({
+          where: {
+            id: removedSaleUnit.id,
+          },
+          data: {
+            active: false,
+            isDefault: false,
+          },
+        });
+      }
+    }
+
+    return tx.product.findUniqueOrThrow({
+      where: { id },
+      include: {
+        owner: true,
+        category: true,
+        unit: true,
+        saleUnits: {
+          include: {
+            unit: true,
+            priceRules: true,
+          },
+          orderBy: { createdAt: "asc" },
         },
       },
-    },
+    });
   });
 }
 
