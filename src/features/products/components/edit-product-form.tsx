@@ -76,7 +76,7 @@ export default function EditProductForm({
   function updateSaleUnit(
     index: number,
     key: keyof SaleUnitInput,
-    value: string | number | boolean | PriceRuleInput[],
+    value: string | number | boolean | PriceRuleInput[] | undefined,
   ) {
     if (!form) return;
 
@@ -270,8 +270,9 @@ export default function EditProductForm({
           return `${rowLabel}: each price rule price must be greater than 0.`;
         }
 
-        if (rule.price >= saleUnit.sellingPrice) {
-          return `${rowLabel}: rule price should be lower than the default selling price.`;
+        const normalTotalPrice = saleUnit.sellingPrice * rule.quantity;
+        if (rule.price > normalTotalPrice) {
+          return `${rowLabel}: rule price cannot be higher than the normal total price for that quantity.`;
         }
       }
     }
