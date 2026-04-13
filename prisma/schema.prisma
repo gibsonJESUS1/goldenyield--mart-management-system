@@ -52,13 +52,14 @@ model Product {
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  owner          Owner             @relation(fields: [ownerId], references: [id])
-  category       Category          @relation(fields: [categoryId], references: [id])
-  unit           ProductUnit       @relation(fields: [unitId], references: [id])
-  saleUnits      ProductSaleUnit[]
-  saleItems      SaleItem[]
-  stockMovements StockMovement[]
-  purchaseItems  PurchaseItem[]
+  owner               Owner                    @relation(fields: [ownerId], references: [id])
+  category            Category                 @relation(fields: [categoryId], references: [id])
+  unit                ProductUnit              @relation(fields: [unitId], references: [id])
+  saleUnits           ProductSaleUnit[]
+  saleItems           SaleItem[]
+  stockMovements      StockMovement[]
+  purchaseItems       PurchaseItem[]
+  costPriceHistories  ProductCostPriceHistory[]
 }
 
 model ProductSaleUnitPriceRule {
@@ -221,4 +222,26 @@ model PurchaseItem {
 
   @@index([purchaseId])
   @@index([productId])
+}
+
+enum CostPriceChangeType {
+  PURCHASE
+  MANUAL_UPDATE
+}
+
+model ProductCostPriceHistory {
+  id           String              @id @default(cuid())
+  productId    String
+  oldCostPrice Decimal?            @db.Decimal(12, 2)
+  newCostPrice Decimal             @db.Decimal(12, 2)
+  changeType   CostPriceChangeType
+  note         String?
+  reference    String?
+  createdAt    DateTime            @default(now())
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@index([changeType])
+  @@index([createdAt])
 }

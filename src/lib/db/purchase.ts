@@ -3,6 +3,10 @@ import { prisma } from "@/lib/prisma";
 import type { CreatePurchaseInput } from "@/lib/validations/purchase";
 
 function toDecimal(value: number) {
+  if (!Number.isFinite(value)) {
+    return new Prisma.Decimal(0);
+  }
+
   return new Prisma.Decimal(value.toFixed(2));
 }
 
@@ -59,6 +63,7 @@ export async function createPurchase(input: CreatePurchaseInput) {
       id: true,
       name: true,
       stock: true,
+      currentCostPrice: true,
     },
   });
 
@@ -67,6 +72,17 @@ export async function createPurchase(input: CreatePurchaseInput) {
   for (const item of input.items) {
     if (!productMap.has(item.productId)) {
       throw new Error(`Product not found: ${item.productId}`);
+    }
+
+    if (
+      !Number.isFinite(item.quantityInBaseUnit) ||
+      item.quantityInBaseUnit <= 0
+    ) {
+      throw new Error("Purchase quantity must be greater than zero");
+    }
+
+    if (!Number.isFinite(item.unitCostPrice) || item.unitCostPrice <= 0) {
+      throw new Error("Unit cost price must be greater than zero");
     }
   }
 
@@ -90,7 +106,17 @@ export async function createPurchase(input: CreatePurchaseInput) {
       });
 
       for (const item of input.items) {
+        const product = productMap.get(item.productId);
+
+        if (!product) {
+          throw new Error(`Product not found: ${item.productId}`);
+        }
+
         const lineTotalNumber = item.quantityInBaseUnit * item.unitCostPrice;
+        const oldCostPrice =
+          product.currentCostPrice != null
+            ? Number(product.currentCostPrice)
+            : null;
 
         await tx.purchaseItem.create({
           data: {
@@ -118,6 +144,17 @@ export async function createPurchase(input: CreatePurchaseInput) {
             type: "IN",
             quantity: item.quantityInBaseUnit,
             note: `Purchase stock-in${input.reference ? ` (${input.reference})` : ""}`,
+          },
+        });
+
+        await tx.productCostPriceHistory.create({
+          data: {
+            productId: item.productId,
+            oldCostPrice: oldCostPrice != null ? toDecimal(oldCostPrice) : null,
+            newCostPrice: toDecimal(item.unitCostPrice),
+            changeType: "PURCHASE",
+            note: input.note || null,
+            reference: purchase.id,
           },
         });
       }

@@ -84,6 +84,10 @@ function getDateRange(range: string | undefined) {
   return {};
 }
 
+function formatMoney(value: number) {
+  return `₦${value.toLocaleString()}`;
+}
+
 export const dynamic = "force-dynamic";
 
 async function getDashboardView(range: string | undefined) {
@@ -111,6 +115,24 @@ async function getDashboardView(range: string | undefined) {
     (debt) => toSafeNumber(debt.balance) > 0,
   ).length;
 
+  const stockValue = products.reduce((sum, product) => {
+    return sum + product.stock * toSafeNumber(product.currentCostPrice);
+  }, 0);
+
+  const potentialSalesValue = products.reduce((sum, product) => {
+    const defaultSaleUnit =
+      product.saleUnits.find((saleUnit) => saleUnit.isDefault) ??
+      product.saleUnits[0];
+
+    const sellingPrice = defaultSaleUnit
+      ? toSafeNumber(defaultSaleUnit.sellingPrice)
+      : 0;
+
+    return sum + product.stock * sellingPrice;
+  }, 0);
+
+  const unrealizedStockMargin = potentialSalesValue - stockValue;
+
   const lowStockItems = products.filter(
     (product) => product.stock > 0 && product.stock <= product.lowStock,
   ).length;
@@ -121,6 +143,9 @@ async function getDashboardView(range: string | undefined) {
 
   const profitMargin =
     totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
+
+  const debtRecoveryRate =
+    totalRevenue > 0 ? ((totalRevenue - outstandingDebts) / totalRevenue) * 100 : 0;
 
   const restockPriority: RestockProduct[] = [...products]
     .filter((product) => product.stock <= product.lowStock)
@@ -217,6 +242,10 @@ async function getDashboardView(range: string | undefined) {
     profitMargin,
     outstandingDebts,
     customersOwing,
+    stockValue,
+    potentialSalesValue,
+    unrealizedStockMargin,
+    debtRecoveryRate,
     lowStockItems,
     outOfStockItems,
     restockPriority,
@@ -250,7 +279,7 @@ export default async function DashboardPage({
             Store Overview
           </h1>
           <p className="mt-1 text-sm leading-6 text-slate-500 sm:text-base">
-            Quick signals for stock, debts, revenue, and profit.
+            Real business metrics for revenue, cost, profit, stock value, and debts.
           </p>
         </div>
 
@@ -267,33 +296,59 @@ export default async function DashboardPage({
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
           title="Revenue"
-          value={`₦${data.totalRevenue.toLocaleString()}`}
-          note="Live from recorded sales"
+          value={formatMoney(data.totalRevenue)}
+          note="Recorded sales value"
         />
         <SummaryCard
-          title="Cost"
-          value={`₦${data.totalCost.toLocaleString()}`}
-          note="Cost of goods sold"
+          title="Cost of Sales"
+          value={formatMoney(data.totalCost)}
+          note="Cost behind sold items"
         />
         <SummaryCard
-          title="Profit"
-          value={`₦${data.totalProfit.toLocaleString()}`}
-          note="Gross profit"
+          title="Gross Profit"
+          value={formatMoney(data.totalProfit)}
+          note="Revenue minus cost"
         />
         <SummaryCard
           title="Profit Margin"
           value={`${data.profitMargin.toFixed(1)}%`}
           note="Profit efficiency"
         />
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <SummaryCard
+          title="Current Stock Value"
+          value={formatMoney(data.stockValue)}
+          note="Based on cost price"
+        />
+        <SummaryCard
+          title="Potential Sales Value"
+          value={formatMoney(data.potentialSalesValue)}
+          note="At default selling prices"
+        />
+        <SummaryCard
+          title="Unrealized Stock Margin"
+          value={formatMoney(data.unrealizedStockMargin)}
+          note="Potential margin in stock"
+        />
         <SummaryCard
           title="Outstanding Debts"
-          value={`₦${data.outstandingDebts.toLocaleString()}`}
-          note="Customer balances to recover"
+          value={formatMoney(data.outstandingDebts)}
+          note="Money to recover"
         />
+      </section>
+
+      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
           title="Customers Owing"
           value={data.customersOwing}
           note="Active debt accounts"
+        />
+        <SummaryCard
+          title="Debt Recovery Rate"
+          value={`${Math.max(0, data.debtRecoveryRate).toFixed(1)}%`}
+          note="Collected vs total sales"
         />
         <SummaryCard
           title="Low Stock Alerts"
@@ -308,6 +363,105 @@ export default async function DashboardPage({
       </section>
 
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+        <SectionCard
+          title="Business Snapshot"
+          description="Quick read of where the store stands right now."
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">Sales Performance</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">
+                {formatMoney(data.totalRevenue)}
+              </p>
+              <p className="mt-1 text-sm text-emerald-700">
+                Profit: {formatMoney(data.totalProfit)}
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">Inventory Position</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">
+                {formatMoney(data.stockValue)}
+              </p>
+              <p className="mt-1 text-sm text-slate-500">
+                Cost-based stock value
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">Receivables</p>
+              <p className="mt-2 text-lg font-semibold text-red-600">
+                {formatMoney(data.outstandingDebts)}
+              </p>
+              <p className="mt-1 text-sm text-slate-500">
+                From {data.customersOwing} customers
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">Stock Opportunity</p>
+              <p className="mt-2 text-lg font-semibold text-slate-900">
+                {formatMoney(data.potentialSalesValue)}
+              </p>
+              <p className="mt-1 text-sm text-emerald-700">
+                Margin potential: {formatMoney(data.unrealizedStockMargin)}
+              </p>
+            </div>
+          </div>
+        </SectionCard>
+
+        <SectionCard
+          title="Debt Watch"
+          description="Customers with the highest outstanding balances."
+        >
+          <div className="space-y-3">
+            {data.topDebtors.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-sm text-slate-500 sm:p-6">
+                No outstanding debt right now.
+              </div>
+            ) : (
+              data.topDebtors.map((debt) => (
+                <div
+                  key={debt.id}
+                  className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="break-words font-semibold text-slate-900">
+                      {debt.customerName}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Outstanding customer balance
+                    </p>
+                  </div>
+
+                  <div className="shrink-0 sm:text-right">
+                    <p className="text-base font-semibold text-red-600">
+                      {formatMoney(debt.balance)}
+                    </p>
+                    <Link
+                      href={`/debts/${debt.id}`}
+                      className="mt-1 inline-flex text-sm font-medium text-emerald-600 hover:underline"
+                    >
+                      Open ledger
+                    </Link>
+                  </div>
+                </div>
+              ))
+            )}
+
+            <div className="pt-1">
+              <Link
+                href="/debts"
+                className="inline-flex text-sm font-medium text-emerald-600 hover:underline"
+              >
+                View all debts
+              </Link>
+            </div>
+          </div>
+        </SectionCard>
+      </section>
+
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <SectionCard
           title="Restock Priority"
           description="Products requiring the fastest action."
@@ -355,67 +509,15 @@ export default async function DashboardPage({
                 href="/inventory"
                 className="inline-flex text-sm font-medium text-emerald-600 hover:underline"
               >
-                View more
+                View inventory
               </Link>
             </div>
           </div>
         </SectionCard>
 
-        <SectionCard
-          title="Debt Watch"
-          description="Customers with the highest outstanding balances."
-        >
-          <div className="space-y-3">
-            {data.topDebtors.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-sm text-slate-500 sm:p-6">
-                No outstanding debt right now.
-              </div>
-            ) : (
-              data.topDebtors.map((debt) => (
-                <div
-                  key={debt.id}
-                  className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="min-w-0">
-                    <p className="break-words font-semibold text-slate-900">
-                      {debt.customerName}
-                    </p>
-                    <p className="mt-1 text-sm text-slate-500">
-                      Outstanding customer balance
-                    </p>
-                  </div>
-
-                  <div className="shrink-0 sm:text-right">
-                    <p className="text-base font-semibold text-red-600">
-                      ₦{debt.balance.toLocaleString()}
-                    </p>
-                    <Link
-                      href={`/debts/${debt.id}`}
-                      className="mt-1 inline-flex text-sm font-medium text-emerald-600 hover:underline"
-                    >
-                      Open ledger
-                    </Link>
-                  </div>
-                </div>
-              ))
-            )}
-
-            <div className="pt-1">
-              <Link
-                href="/debts"
-                className="inline-flex text-sm font-medium text-emerald-600 hover:underline"
-              >
-                View all debts
-              </Link>
-            </div>
-          </div>
-        </SectionCard>
-      </section>
-
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <SectionCard
           title="Owner Summary"
-          description="Live product count, revenue, and profit by owner."
+          description="Revenue and profit contribution by owner."
         >
           <div className="space-y-3">
             {data.ownerSummary.length === 0 ? (
@@ -440,10 +542,10 @@ export default async function DashboardPage({
 
                     <div className="shrink-0 sm:text-right">
                       <p className="text-base font-semibold text-slate-900">
-                        Revenue: ₦{item.salesAmount.toLocaleString()}
+                        Revenue: {formatMoney(item.salesAmount)}
                       </p>
                       <p className="text-sm font-medium text-emerald-700">
-                        Profit: ₦{item.profitAmount.toLocaleString()}
+                        Profit: {formatMoney(item.profitAmount)}
                       </p>
                     </div>
                   </div>
@@ -456,12 +558,14 @@ export default async function DashboardPage({
                 href="/reports"
                 className="inline-flex text-sm font-medium text-emerald-600 hover:underline"
               >
-                View more
+                View reports
               </Link>
             </div>
           </div>
         </SectionCard>
+      </section>
 
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <SectionCard
           title="Recent Sales"
           description="Most recent transaction activity."
@@ -491,7 +595,7 @@ export default async function DashboardPage({
                   </div>
 
                   <p className="shrink-0 text-base font-bold text-slate-900 sm:text-lg sm:text-right">
-                    ₦{sale.subtotal.toLocaleString()}
+                    {formatMoney(sale.subtotal)}
                   </p>
                 </div>
               ))
@@ -507,9 +611,7 @@ export default async function DashboardPage({
             </div>
           </div>
         </SectionCard>
-      </section>
 
-      <section className="grid grid-cols-1 gap-6">
         <SectionCard
           title="Top Products"
           description="Best-performing products by recorded profit."
@@ -537,10 +639,10 @@ export default async function DashboardPage({
 
                     <div className="shrink-0 sm:text-right">
                       <p className="text-base font-semibold text-slate-900">
-                        Revenue: ₦{product.revenue.toLocaleString()}
+                        Revenue: {formatMoney(product.revenue)}
                       </p>
                       <p className="text-sm font-medium text-emerald-700">
-                        Profit: ₦{product.profit.toLocaleString()}
+                        Profit: {formatMoney(product.profit)}
                       </p>
                     </div>
                   </div>
@@ -553,7 +655,7 @@ export default async function DashboardPage({
                 href="/reports"
                 className="inline-flex text-sm font-medium text-emerald-600 hover:underline"
               >
-                View more
+                View reports
               </Link>
             </div>
           </div>

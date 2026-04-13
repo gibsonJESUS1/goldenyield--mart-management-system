@@ -3,6 +3,7 @@ import SummaryCard from "@/components/shared/summary-card";
 import InventoryActionButton from "@/features/products/components/inventory-action-button";
 import UpdateCostPriceButton from "@/features/products/components/update-cost-price-button";
 import { getProducts } from "@/lib/db/product";
+import ViewCostHistoryButton from "@/features/products/components/view-cost-history-button";
 
 export const dynamic = "force-dynamic";
 
@@ -178,6 +179,10 @@ export default async function InventoryPage() {
                       productName={item.name}
                       currentCostPrice={item.currentCostPrice}
                     />
+                     <ViewCostHistoryButton
+    productId={item.id}
+    productName={item.name}
+  />
                   </div>
                 </div>
               </div>
@@ -236,6 +241,12 @@ export default async function InventoryPage() {
                         productName={row.name}
                         currentCostPrice={row.currentCostPrice}
                       />
+
+
+    <ViewCostHistoryButton
+      productId={row.id}
+      productName={row.name}
+    />
                     </div>
                   ),
                 },
