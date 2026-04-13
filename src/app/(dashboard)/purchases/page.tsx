@@ -58,9 +58,12 @@ export default async function PurchasesPage() {
   return (
     <div className="space-y-6 p-4 md:p-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Purchases</h1>
-        <p className="mt-1 text-sm text-gray-600">
-          Record stock purchases, update cost price, and keep purchase history.
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+          Purchases
+        </h1>
+        <p className="mt-1 text-sm text-slate-600">
+          Record real stock purchases, increase inventory, and keep purchase
+          history. Cost-only price updates should be handled separately.
         </p>
       </div>
 

@@ -32,6 +32,7 @@ export async function GET() {
     return NextResponse.json(normalized);
   } catch (error) {
     console.error("GET /api/purchases error:", error);
+
     return NextResponse.json(
       { message: "Failed to load purchases" },
       { status: 500 },

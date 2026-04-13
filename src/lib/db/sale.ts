@@ -82,6 +82,18 @@ export async function createSaleWithInventory(
   const groupedByProduct = new Map<string, number>();
 
   for (const item of input.items) {
+    if (!Number.isFinite(item.quantity) || item.quantity <= 0) {
+      throw new Error("Invalid quantity");
+    }
+
+    if (!Number.isFinite(item.unitPrice) || item.unitPrice < 0) {
+      throw new Error("Invalid unit price");
+    }
+
+    if (!Number.isFinite(item.total) || item.total < 0) {
+      throw new Error("Invalid line total");
+    }
+
     if (
       !Number.isFinite(item.baseUnitsConsumed) ||
       item.baseUnitsConsumed <= 0
@@ -140,7 +152,7 @@ export async function createSaleWithInventory(
         currentCostPrice:
           product.currentCostPrice != null
             ? Number(product.currentCostPrice)
-            : null,
+            : 0,
       },
     ]),
   );
@@ -213,9 +225,13 @@ export async function createSaleWithInventory(
                 throw new Error("Product cost data not found");
               }
 
-              const rawUnitCostPrice = product.currentCostPrice;
-              const unitCostPrice = rawUnitCostPrice ?? 0;
+              // Snapshot cost price at time of sale
+              const unitCostPrice = product.currentCostPrice ?? 0;
+
+              // Cost is based on base units consumed, not sale quantity
               const lineCostTotal = unitCostPrice * item.baseUnitsConsumed;
+
+              // Profit is sale line total minus line cost total
               const lineProfit = item.total - lineCostTotal;
 
               return {

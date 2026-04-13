@@ -1,6 +1,7 @@
 import DataTable from "@/components/ui/data-table";
 import SummaryCard from "@/components/shared/summary-card";
 import InventoryActionButton from "@/features/products/components/inventory-action-button";
+import UpdateCostPriceButton from "@/features/products/components/update-cost-price-button";
 import { getProducts } from "@/lib/db/product";
 
 export const dynamic = "force-dynamic";
@@ -14,6 +15,7 @@ type InventoryItem = {
   stock: number;
   lowStock: number;
   price: number;
+  currentCostPrice: number;
 };
 
 function getStockBadge(stock: number, lowStock: number) {
@@ -68,6 +70,8 @@ async function getInventoryItems(): Promise<InventoryItem[]> {
       stock: product.stock,
       lowStock: product.lowStock,
       price: defaultSaleUnit ? Number(defaultSaleUnit.sellingPrice) : 0,
+      currentCostPrice:
+        product.currentCostPrice != null ? Number(product.currentCostPrice) : 0,
     };
   });
 }
@@ -80,7 +84,10 @@ export default async function InventoryPage() {
     (item) => item.stock > 0 && item.stock <= item.lowStock,
   ).length;
   const outOfStockItems = items.filter((item) => item.stock === 0).length;
-  const stockValue = items.reduce((sum, item) => sum + item.stock * item.price, 0);
+  const stockValue = items.reduce(
+    (sum, item) => sum + item.stock * item.currentCostPrice,
+    0,
+  );
 
   return (
     <div className="space-y-5 sm:space-y-6">
@@ -89,7 +96,8 @@ export default async function InventoryPage() {
           Inventory
         </h1>
         <p className="mt-1 text-sm leading-6 text-slate-500 sm:text-base">
-          Monitor stock levels, restock products, adjust stock, and track inventory pressure.
+          Monitor stock levels, restock products, adjust stock, update cost price,
+          and track inventory pressure.
         </p>
       </div>
 
@@ -141,8 +149,16 @@ export default async function InventoryPage() {
                       {getStockText(item.stock, item.lowStock)}
                     </p>
                     <p>
-                      <span className="font-medium text-slate-800">Value:</span>{" "}
+                      <span className="font-medium text-slate-800">
+                        Selling Value:
+                      </span>{" "}
                       ₦{(item.stock * item.price).toLocaleString()}
+                    </p>
+                    <p>
+                      <span className="font-medium text-slate-800">
+                        Cost Price:
+                      </span>{" "}
+                      ₦{item.currentCostPrice.toLocaleString()}
                     </p>
                     <p>
                       <span className="font-medium text-slate-800">
@@ -152,10 +168,15 @@ export default async function InventoryPage() {
                     </p>
                   </div>
 
-                  <div className="pt-1">
+                  <div className="flex flex-wrap gap-2 pt-1">
                     <InventoryActionButton
                       productId={item.id}
                       productName={item.name}
+                    />
+                    <UpdateCostPriceButton
+                      productId={item.id}
+                      productName={item.name}
+                      currentCostPrice={item.currentCostPrice}
                     />
                   </div>
                 </div>
@@ -191,18 +212,31 @@ export default async function InventoryPage() {
                   },
                 },
                 {
+                  header: "Cost Price",
+                  accessor: "currentCostPrice",
+                  render: (row) => `₦${row.currentCostPrice.toLocaleString()}`,
+                },
+                {
                   header: "Value",
                   accessor: "price",
-                  render: (row) => `₦${(row.stock * row.price).toLocaleString()}`,
+                  render: (row) =>
+                    `₦${(row.stock * row.currentCostPrice).toLocaleString()}`,
                 },
                 {
                   header: "Actions",
                   accessor: "id",
                   render: (row) => (
-                    <InventoryActionButton
-                      productId={row.id}
-                      productName={row.name}
-                    />
+                    <div className="flex flex-wrap gap-2">
+                      <InventoryActionButton
+                        productId={row.id}
+                        productName={row.name}
+                      />
+                      <UpdateCostPriceButton
+                        productId={row.id}
+                        productName={row.name}
+                        currentCostPrice={row.currentCostPrice}
+                      />
+                    </div>
                   ),
                 },
               ]}
