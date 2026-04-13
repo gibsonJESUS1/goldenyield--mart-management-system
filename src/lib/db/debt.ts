@@ -316,3 +316,14 @@ export async function getDebtSummary() {
     debts,
   };
 }
+
+export async function getCustomerDebtById(id: string) {
+  return prisma.customerDebt.findUnique({
+    where: { id },
+    include: {
+      transactions: {
+        orderBy: { createdAt: "desc" },
+      },
+    },
+  });
+}

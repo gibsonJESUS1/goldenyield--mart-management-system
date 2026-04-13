@@ -41,6 +41,12 @@ type OwnerSummary = {
   profitAmount: number;
 };
 
+type DebtSummary = {
+  id: string;
+  customerName: string;
+  balance: number;
+};
+
 function toSafeNumber(value: unknown) {
   const num = Number(value ?? 0);
   return Number.isFinite(num) ? num : 0;
@@ -101,11 +107,17 @@ async function getDashboardView(range: string | undefined) {
     0,
   );
 
+  const customersOwing = debts.filter(
+    (debt) => toSafeNumber(debt.balance) > 0,
+  ).length;
+
   const lowStockItems = products.filter(
     (product) => product.stock > 0 && product.stock <= product.lowStock,
   ).length;
 
-  const outOfStockItems = products.filter((product) => product.stock === 0).length;
+  const outOfStockItems = products.filter(
+    (product) => product.stock === 0,
+  ).length;
 
   const profitMargin =
     totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
@@ -125,7 +137,9 @@ async function getDashboardView(range: string | undefined) {
 
   const ownerSummary: OwnerSummary[] = owners
     .map((owner) => {
-      const ownerProducts = products.filter((product) => product.ownerId === owner.id);
+      const ownerProducts = products.filter(
+        (product) => product.ownerId === owner.id,
+      );
 
       const ownerItems = sales
         .flatMap((sale) => sale.items)
@@ -186,18 +200,30 @@ async function getDashboardView(range: string | undefined) {
     .sort((a, b) => b.profit - a.profit)
     .slice(0, 3);
 
+  const topDebtors: DebtSummary[] = debts
+    .filter((debt) => toSafeNumber(debt.balance) > 0)
+    .sort((a, b) => toSafeNumber(b.balance) - toSafeNumber(a.balance))
+    .slice(0, 4)
+    .map((debt) => ({
+      id: debt.id,
+      customerName: debt.customerName,
+      balance: toSafeNumber(debt.balance),
+    }));
+
   return {
     totalRevenue,
     totalCost,
     totalProfit,
     profitMargin,
     outstandingDebts,
+    customersOwing,
     lowStockItems,
     outOfStockItems,
     restockPriority,
     ownerSummary,
     recentSales,
     topProducts,
+    topDebtors,
   };
 }
 
@@ -265,6 +291,11 @@ export default async function DashboardPage({
           note="Customer balances to recover"
         />
         <SummaryCard
+          title="Customers Owing"
+          value={data.customersOwing}
+          note="Active debt accounts"
+        />
+        <SummaryCard
           title="Low Stock Alerts"
           value={data.lowStockItems}
           note="Needs attention soon"
@@ -273,11 +304,6 @@ export default async function DashboardPage({
           title="Out of Stock"
           value={data.outOfStockItems}
           note="Immediate restock needed"
-        />
-        <SummaryCard
-          title="Restock Priority"
-          value={data.restockPriority.length}
-          note="Urgent items in focus"
         />
       </section>
 
@@ -308,10 +334,13 @@ export default async function DashboardPage({
 
                   <div className="shrink-0 sm:text-right">
                     <p
-                      className={`font-semibold ${product.stock === 0 ? "text-red-600" : "text-amber-600"
-                        }`}
+                      className={`font-semibold ${
+                        product.stock === 0 ? "text-red-600" : "text-amber-600"
+                      }`}
                     >
-                      {product.stock === 0 ? "Out of stock" : `${product.stock} left`}
+                      {product.stock === 0
+                        ? "Out of stock"
+                        : `${product.stock} left`}
                     </p>
                     <p className="text-sm text-slate-500">
                       Threshold: {product.lowStock}
@@ -332,6 +361,58 @@ export default async function DashboardPage({
           </div>
         </SectionCard>
 
+        <SectionCard
+          title="Debt Watch"
+          description="Customers with the highest outstanding balances."
+        >
+          <div className="space-y-3">
+            {data.topDebtors.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-sm text-slate-500 sm:p-6">
+                No outstanding debt right now.
+              </div>
+            ) : (
+              data.topDebtors.map((debt) => (
+                <div
+                  key={debt.id}
+                  className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <p className="break-words font-semibold text-slate-900">
+                      {debt.customerName}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Outstanding customer balance
+                    </p>
+                  </div>
+
+                  <div className="shrink-0 sm:text-right">
+                    <p className="text-base font-semibold text-red-600">
+                      ₦{debt.balance.toLocaleString()}
+                    </p>
+                    <Link
+                      href={`/debts/${debt.id}`}
+                      className="mt-1 inline-flex text-sm font-medium text-emerald-600 hover:underline"
+                    >
+                      Open ledger
+                    </Link>
+                  </div>
+                </div>
+              ))
+            )}
+
+            <div className="pt-1">
+              <Link
+                href="/debts"
+                className="inline-flex text-sm font-medium text-emerald-600 hover:underline"
+              >
+                View all debts
+              </Link>
+            </div>
+          </div>
+        </SectionCard>
+      </section>
+
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <SectionCard
           title="Owner Summary"
           description="Live product count, revenue, and profit by owner."
@@ -380,9 +461,7 @@ export default async function DashboardPage({
             </div>
           </div>
         </SectionCard>
-      </section>
 
-      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <SectionCard
           title="Recent Sales"
           description="Most recent transaction activity."
@@ -403,10 +482,9 @@ export default async function DashboardPage({
                       {sale.customerName}
                     </p>
                     <p
-                      className={`mt-1 text-sm font-medium ${sale.balance <= 0
-                          ? "text-emerald-600"
-                          : "text-amber-600"
-                        }`}
+                      className={`mt-1 text-sm font-medium ${
+                        sale.balance <= 0 ? "text-emerald-600" : "text-amber-600"
+                      }`}
                     >
                       {sale.balance <= 0 ? "Paid" : "Outstanding"}
                     </p>
@@ -421,15 +499,17 @@ export default async function DashboardPage({
 
             <div className="pt-1">
               <Link
-                href="/sales"
+                href="/sales/history"
                 className="inline-flex text-sm font-medium text-emerald-600 hover:underline"
               >
-                View more
+                View sales history
               </Link>
             </div>
           </div>
         </SectionCard>
+      </section>
 
+      <section className="grid grid-cols-1 gap-6">
         <SectionCard
           title="Top Products"
           description="Best-performing products by recorded profit."

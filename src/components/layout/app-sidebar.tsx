@@ -11,8 +11,10 @@ const links = [
     { name: "Units", href: "/units" },
   { name: "Inventory", href: "/inventory" },
   { name: "Sales", href: "/sales" },
+   { name: "Sales History", href: "/sales/history" },
   { name: "Debts", href: "/debts" },
   { name: "Reports", href: "/reports" },
+  { name: "  Purchases", href: "/purchases" },
 ]
 
 export default function AppSidebar() {

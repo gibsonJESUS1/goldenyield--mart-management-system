@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import SummaryCard from "@/components/shared/summary-card";
 
@@ -351,6 +352,13 @@ export default function DebtsPage() {
                 >
                   Adjust Debt
                 </button>
+
+                <Link
+                  href={`/debts/${debt.id}`}
+                  className="rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  View Ledger
+                </Link>
               </div>
 
               <div className="mt-5">
