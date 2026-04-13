@@ -1,12 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-export async function GET(
-  request: Request,
-  { params }: { params: { productId: string } },
-) {
+type RouteContext = {
+  params: Promise<{
+    productId: string;
+  }>;
+};
+
+export async function GET(_request: NextRequest, context: RouteContext) {
   try {
-    const { productId } = params;
+    const { productId } = await context.params;
 
     const history = await prisma.productCostPriceHistory.findMany({
       where: { productId },
@@ -15,18 +18,19 @@ export async function GET(
     });
 
     return NextResponse.json(
-      history.map((h) => ({
-        id: h.id,
-        oldCostPrice: h.oldCostPrice ? Number(h.oldCostPrice) : null,
-        newCostPrice: Number(h.newCostPrice),
-        changeType: h.changeType,
-        note: h.note,
-        reference: h.reference,
-        createdAt: h.createdAt,
+      history.map((item) => ({
+        id: item.id,
+        oldCostPrice:
+          item.oldCostPrice != null ? Number(item.oldCostPrice) : null,
+        newCostPrice: Number(item.newCostPrice),
+        changeType: item.changeType,
+        note: item.note,
+        reference: item.reference,
+        createdAt: item.createdAt,
       })),
     );
   } catch (error) {
-    console.error("Cost history error:", error);
+    console.error("GET /api/products/[productId]/cost-history error:", error);
 
     return NextResponse.json(
       { message: "Failed to load cost history" },
