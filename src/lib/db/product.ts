@@ -1,5 +1,10 @@
 import { prisma } from "@/lib/prisma";
 
+import {
+  assertValidProductUnitConfiguration,
+  ProductUnitConfigurationError,
+} from "@/lib/product-unit-config";
+
 export type CreatePriceRuleInput = {
   quantity: number;
   price: number;
@@ -79,32 +84,37 @@ export async function findDuplicateProductByName(
   name: string,
   excludeProductId?: string,
 ): Promise<DuplicateProductInfo | null> {
-  const normalizedName = normalizeProductName(name);
+  const normalizedName =
+    normalizeProductName(name);
 
   if (!normalizedName) {
     return null;
   }
 
-  const products = await prisma.product.findMany({
-    where: excludeProductId
-      ? {
-          id: {
-            not: excludeProductId,
-          },
-        }
-      : undefined,
+  const products =
+    await prisma.product.findMany({
+      where: excludeProductId
+        ? {
+            id: {
+              not: excludeProductId,
+            },
+          }
+        : undefined,
 
-    select: {
-      id: true,
-      name: true,
-      active: true,
-    },
-  });
+      select: {
+        id: true,
+        name: true,
+        active: true,
+      },
+    });
 
-  const duplicate = products.find(
-    (product) =>
-      normalizeProductName(product.name) === normalizedName,
-  );
+  const duplicate =
+    products.find(
+      (product) =>
+        normalizeProductName(
+          product.name,
+        ) === normalizedName,
+    );
 
   return duplicate ?? null;
 }
@@ -143,7 +153,9 @@ export async function getProducts() {
   });
 }
 
-export async function getProductById(id: string) {
+export async function getProductById(
+  id: string,
+) {
   return prisma.product.findUnique({
     where: {
       id,
@@ -188,15 +200,25 @@ export async function getProductById(id: string) {
 export async function createProduct(
   data: CreateProductInput,
 ) {
-  const cleanedName = data.name
-    .trim()
-    .replace(/\s+/g, " ");
+  const cleanedName =
+    data.name
+      .trim()
+      .replace(/\s+/g, " ");
+
+  assertValidProductUnitConfiguration(
+    data.unitId,
+    data.saleUnits,
+  );
 
   const duplicate =
-    await findDuplicateProductByName(cleanedName);
+    await findDuplicateProductByName(
+      cleanedName,
+    );
 
   if (duplicate) {
-    throw new DuplicateProductError(duplicate);
+    throw new DuplicateProductError(
+      duplicate,
+    );
   }
 
   return prisma.product.create({
@@ -205,56 +227,68 @@ export async function createProduct(
 
       ownerId: data.ownerId,
 
-      categoryId: data.categoryId,
+      categoryId:
+        data.categoryId,
 
-      unitId: data.unitId,
+      unitId:
+        data.unitId,
 
-      stock: data.stock,
+      stock:
+        data.stock,
 
-      lowStock: data.lowStock,
+      lowStock:
+        data.lowStock,
 
-      active: data.active ?? true,
+      active:
+        data.active ?? true,
 
       saleUnits: {
-        create: data.saleUnits.map(
-          (saleUnit) => ({
-            unitId: saleUnit.unitId,
+        create:
+          data.saleUnits.map(
+            (saleUnit) => ({
+              unitId:
+                saleUnit.unitId,
 
-            quantityInBaseUnit:
-              saleUnit.quantityInBaseUnit,
+              quantityInBaseUnit:
+                saleUnit.quantityInBaseUnit,
 
-            sellingPrice:
-              saleUnit.sellingPrice,
+              sellingPrice:
+                saleUnit.sellingPrice,
 
-            isDefault:
-              saleUnit.isDefault ?? false,
+              isDefault:
+                saleUnit.isDefault ??
+                false,
 
-            active:
-              saleUnit.active ?? true,
+              active:
+                saleUnit.active ??
+                true,
 
-            ...(saleUnit.priceRules &&
-            saleUnit.priceRules.length > 0
-              ? {
-                  priceRules: {
-                    create:
-                      saleUnit.priceRules.map(
-                        (rule) => ({
-                          quantity:
-                            rule.quantity,
+              ...(saleUnit.priceRules &&
+              saleUnit.priceRules
+                .length > 0
+                ? {
+                    priceRules: {
+                      create:
+                        saleUnit.priceRules.map(
+                          (
+                            rule,
+                          ) => ({
+                            quantity:
+                              rule.quantity,
 
-                          price:
-                            rule.price,
+                            price:
+                              rule.price,
 
-                          active:
-                            rule.active ??
-                            true,
-                        }),
-                      ),
-                  },
-                }
-              : {}),
-          }),
-        ),
+                            active:
+                              rule.active ??
+                              true,
+                          }),
+                        ),
+                    },
+                  }
+                : {}),
+            }),
+          ),
       },
 
       ...(data.stock > 0
@@ -263,9 +297,11 @@ export async function createProduct(
               create: {
                 type: "IN",
 
-                quantity: data.stock,
+                quantity:
+                  data.stock,
 
-                note: "Initial stock",
+                note:
+                  "Initial stock",
               },
             },
           }
@@ -291,9 +327,15 @@ export async function updateProduct(
   id: string,
   data: UpdateProductInput,
 ) {
-  const cleanedName = data.name
-    .trim()
-    .replace(/\s+/g, " ");
+  const cleanedName =
+    data.name
+      .trim()
+      .replace(/\s+/g, " ");
+
+  assertValidProductUnitConfiguration(
+    data.unitId,
+    data.saleUnits,
+  );
 
   const duplicate =
     await findDuplicateProductByName(
@@ -302,282 +344,386 @@ export async function updateProduct(
     );
 
   if (duplicate) {
-    throw new DuplicateProductError(duplicate);
+    throw new DuplicateProductError(
+      duplicate,
+    );
   }
 
-  return prisma.$transaction(async (tx) => {
-    const existingProduct =
-      await tx.product.findUnique({
+  return prisma.$transaction(
+    async (tx) => {
+      const existingProduct =
+        await tx.product.findUnique({
+          where: {
+            id,
+          },
+
+          include: {
+            saleUnits: {
+              include: {
+                priceRules: true,
+              },
+            },
+          },
+        });
+
+      if (!existingProduct) {
+        throw new Error(
+          "Product not found",
+        );
+      }
+
+      /*
+       * Changing the base unit changes the meaning
+       * of the stock quantity.
+       *
+       * We only allow it when current stock is zero.
+       */
+      if (
+        existingProduct.unitId !==
+          data.unitId &&
+        existingProduct.stock !== 0
+      ) {
+        throw new ProductUnitConfigurationError(
+          "Base stock unit cannot be changed while the product has stock. Reset or recount the product to zero first.",
+        );
+      }
+
+      const existingSaleUnits =
+        existingProduct.saleUnits;
+
+      const existingSaleUnitIds =
+        new Set(
+          existingSaleUnits.map(
+            (unit) => unit.id,
+          ),
+        );
+
+      const incomingSaleUnitIds =
+        new Set(
+          data.saleUnits
+            .map(
+              (unit) => unit.id,
+            )
+            .filter(
+              (
+                unitId,
+              ): unitId is string =>
+                Boolean(unitId),
+            ),
+        );
+
+      const removedSaleUnits =
+        existingSaleUnits.filter(
+          (unit) =>
+            !incomingSaleUnitIds.has(
+              unit.id,
+            ),
+        );
+
+      await tx.product.update({
         where: {
           id,
         },
 
-        include: {
-          saleUnits: {
-            include: {
-              priceRules: true,
-            },
-          },
+        data: {
+          name:
+            cleanedName,
+
+          ownerId:
+            data.ownerId,
+
+          categoryId:
+            data.categoryId,
+
+          unitId:
+            data.unitId,
+
+          stock:
+            data.stock,
+
+          lowStock:
+            data.lowStock,
+
+          active:
+            data.active ?? true,
         },
       });
 
-    if (!existingProduct) {
-      throw new Error(
-        "Product not found",
-      );
-    }
-
-    const existingSaleUnits =
-      existingProduct.saleUnits;
-
-    const existingSaleUnitIds =
-      new Set(
-        existingSaleUnits.map(
-          (unit) => unit.id,
-        ),
-      );
-
-    const incomingSaleUnitIds =
-      new Set(
+      /*
+       * Update/create incoming selling units.
+       */
+      for (
+        const saleUnit of
         data.saleUnits
-          .map((unit) => unit.id)
-          .filter(
-            (
-              unitId,
-            ): unitId is string =>
-              Boolean(unitId),
-          ),
-      );
+      ) {
+        if (
+          saleUnit.id &&
+          existingSaleUnitIds.has(
+            saleUnit.id,
+          )
+        ) {
+          /*
+           * Check whether this exact selling unit
+           * has already appeared in historical sales.
+           */
+          const usageCount =
+            await tx.saleItem.count({
+              where: {
+                saleUnitId:
+                  saleUnit.id,
+              },
+            });
 
-    const removedSaleUnits =
-      existingSaleUnits.filter(
-        (unit) =>
-          !incomingSaleUnitIds.has(
-            unit.id,
-          ),
-      );
+          const updateData: {
+            unitId?: string;
+            quantityInBaseUnit?: number;
+            sellingPrice: number;
+            isDefault: boolean;
+            active: boolean;
+          } = {
+            sellingPrice:
+              saleUnit.sellingPrice,
 
-    await tx.product.update({
-      where: {
-        id,
-      },
+            isDefault:
+              saleUnit.isDefault ??
+              false,
 
-      data: {
-        name: cleanedName,
+            active:
+              saleUnit.active ??
+              true,
+          };
 
-        ownerId: data.ownerId,
+          /*
+           * Unit identity and conversion can only be
+           * rewritten when this selling unit has never
+           * been used in a historical sale.
+           *
+           * Selling price can still change because old
+           * SaleItems already store their historical
+           * unit price.
+           */
+          if (usageCount === 0) {
+            updateData.unitId =
+              saleUnit.unitId;
 
-        categoryId:
-          data.categoryId,
+            updateData.quantityInBaseUnit =
+              saleUnit.quantityInBaseUnit;
+          }
 
-        unitId: data.unitId,
+          await tx.productSaleUnit.update(
+            {
+              where: {
+                id:
+                  saleUnit.id,
+              },
 
-        stock: data.stock,
+              data:
+                updateData,
+            },
+          );
 
-        lowStock: data.lowStock,
+          /*
+           * Price rules represent the current selling
+           * configuration. Old sales already have their
+           * historical prices stored in SaleItem.
+           */
+          await tx.productSaleUnitPriceRule.deleteMany(
+            {
+              where: {
+                productSaleUnitId:
+                  saleUnit.id,
+              },
+            },
+          );
 
-        active:
-          data.active ?? true,
-      },
-    });
+          if (
+            saleUnit.priceRules &&
+            saleUnit.priceRules
+              .length > 0
+          ) {
+            await tx.productSaleUnitPriceRule.createMany(
+              {
+                data:
+                  saleUnit.priceRules.map(
+                    (
+                      rule,
+                    ) => ({
+                      productSaleUnitId:
+                        saleUnit.id!,
 
-    for (const saleUnit of data.saleUnits) {
-      if (
-        saleUnit.id &&
-        existingSaleUnitIds.has(
-          saleUnit.id,
-        )
+                      quantity:
+                        rule.quantity,
+
+                      price:
+                        rule.price,
+
+                      active:
+                        rule.active ??
+                        true,
+                    }),
+                  ),
+              },
+            );
+          }
+        } else {
+          /*
+           * Brand-new selling unit.
+           */
+          await tx.productSaleUnit.create(
+            {
+              data: {
+                productId:
+                  id,
+
+                unitId:
+                  saleUnit.unitId,
+
+                quantityInBaseUnit:
+                  saleUnit.quantityInBaseUnit,
+
+                sellingPrice:
+                  saleUnit.sellingPrice,
+
+                isDefault:
+                  saleUnit.isDefault ??
+                  false,
+
+                active:
+                  saleUnit.active ??
+                  true,
+
+                ...(saleUnit.priceRules &&
+                saleUnit.priceRules
+                  .length > 0
+                  ? {
+                      priceRules: {
+                        create:
+                          saleUnit.priceRules.map(
+                            (
+                              rule,
+                            ) => ({
+                              quantity:
+                                rule.quantity,
+
+                              price:
+                                rule.price,
+
+                              active:
+                                rule.active ??
+                                true,
+                            }),
+                          ),
+                      },
+                    }
+                  : {}),
+              },
+            },
+          );
+        }
+      }
+
+      /*
+       * Handle selling units removed from the editor.
+       */
+      for (
+        const removedSaleUnit of
+        removedSaleUnits
       ) {
         const usageCount =
           await tx.saleItem.count({
             where: {
               saleUnitId:
-                saleUnit.id,
+                removedSaleUnit.id,
             },
           });
 
-        const updateData: {
-          unitId?: string;
-          quantityInBaseUnit?: number;
-          sellingPrice: number;
-          isDefault: boolean;
-          active: boolean;
-        } = {
-          sellingPrice:
-            saleUnit.sellingPrice,
-
-          isDefault:
-            saleUnit.isDefault ??
-            false,
-
-          active:
-            saleUnit.active ?? true,
-        };
-
         if (usageCount === 0) {
-          updateData.unitId =
-            saleUnit.unitId;
-
-          updateData.quantityInBaseUnit =
-            saleUnit.quantityInBaseUnit;
-        }
-
-        await tx.productSaleUnit.update({
-          where: {
-            id: saleUnit.id,
-          },
-
-          data: updateData,
-        });
-
-        await tx.productSaleUnitPriceRule.deleteMany(
-          {
-            where: {
-              productSaleUnitId:
-                saleUnit.id,
-            },
-          },
-        );
-
-        if (
-          saleUnit.priceRules &&
-          saleUnit.priceRules.length >
-            0
-        ) {
-          await tx.productSaleUnitPriceRule.createMany(
+          /*
+           * Safe to physically remove because no
+           * historical SaleItem references it.
+           */
+          await tx.productSaleUnitPriceRule.deleteMany(
             {
-              data:
-                saleUnit.priceRules.map(
-                  (rule) => ({
-                    productSaleUnitId:
-                      saleUnit.id!,
+              where: {
+                productSaleUnitId:
+                  removedSaleUnit.id,
+              },
+            },
+          );
 
-                    quantity:
-                      rule.quantity,
+          await tx.productSaleUnit.delete(
+            {
+              where: {
+                id:
+                  removedSaleUnit.id,
+              },
+            },
+          );
+        } else {
+          /*
+           * Preserve selling units that were used in
+           * historical sales. They become inactive
+           * instead of being deleted.
+           */
+          await tx.productSaleUnit.update(
+            {
+              where: {
+                id:
+                  removedSaleUnit.id,
+              },
 
-                    price:
-                      rule.price,
+              data: {
+                active:
+                  false,
 
-                    active:
-                      rule.active ??
-                      true,
-                  }),
-                ),
+                isDefault:
+                  false,
+              },
             },
           );
         }
-      } else {
-        await tx.productSaleUnit.create(
-          {
-            data: {
-              productId: id,
-
-              unitId:
-                saleUnit.unitId,
-
-              quantityInBaseUnit:
-                saleUnit.quantityInBaseUnit,
-
-              sellingPrice:
-                saleUnit.sellingPrice,
-
-              isDefault:
-                saleUnit.isDefault ??
-                false,
-
-              active:
-                saleUnit.active ??
-                true,
-
-              ...(saleUnit.priceRules &&
-              saleUnit.priceRules
-                .length > 0
-                ? {
-                    priceRules: {
-                      create:
-                        saleUnit.priceRules.map(
-                          (rule) => ({
-                            quantity:
-                              rule.quantity,
-
-                            price:
-                              rule.price,
-
-                            active:
-                              rule.active ??
-                              true,
-                          }),
-                        ),
-                    },
-                  }
-                : {}),
-            },
-          },
-        );
       }
-    }
 
-    for (const removedSaleUnit of removedSaleUnits) {
-      const usageCount =
-        await tx.saleItem.count({
+      return tx.product.findUniqueOrThrow(
+        {
           where: {
-            saleUnitId:
-              removedSaleUnit.id,
-          },
-        });
-
-      if (usageCount === 0) {
-        await tx.productSaleUnitPriceRule.deleteMany(
-          {
-            where: {
-              productSaleUnitId:
-                removedSaleUnit.id,
-            },
-          },
-        );
-
-        await tx.productSaleUnit.delete({
-          where: {
-            id: removedSaleUnit.id,
-          },
-        });
-      } else {
-        await tx.productSaleUnit.update({
-          where: {
-            id: removedSaleUnit.id,
+            id,
           },
 
-          data: {
-            active: false,
-            isDefault: false,
-          },
-        });
-      }
-    }
-
-    return tx.product.findUniqueOrThrow({
-      where: {
-        id,
-      },
-
-      include: {
-        owner: true,
-        category: true,
-        unit: true,
-
-        saleUnits: {
           include: {
+            owner: true,
+            category: true,
             unit: true,
-            priceRules: true,
-          },
 
-          orderBy: {
-            createdAt: "asc",
+            saleUnits: {
+              include: {
+                unit: true,
+                priceRules:
+                  true,
+              },
+
+              orderBy: {
+                createdAt:
+                  "asc",
+              },
+            },
           },
         },
-      },
-    });
-  });
+      );
+    },
+
+    /*
+     * Neon is remote and this operation performs
+     * multiple reads/writes.
+     *
+     * Prisma's default interactive transaction
+     * timeout is only 5 seconds, which caused P2028.
+     */
+    {
+      maxWait: 10000,
+      timeout: 30000,
+    },
+  );
 }
 
 export async function reduceProductStock(
@@ -608,7 +754,8 @@ export async function reduceProductStock(
 
   return prisma.product.update({
     where: {
-      id: productId,
+      id:
+        productId,
     },
 
     data: {
@@ -657,7 +804,8 @@ export async function restockProduct(
 
   return prisma.product.update({
     where: {
-      id: productId,
+      id:
+        productId,
     },
 
     data: {

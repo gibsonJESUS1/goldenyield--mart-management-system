@@ -7,6 +7,10 @@ import {
   updateProduct,
 } from "@/lib/db/product";
 
+import {
+  ProductUnitConfigurationError,
+} from "@/lib/product-unit-config";
+
 export async function GET(
   _request: Request,
   {
@@ -20,14 +24,12 @@ export async function GET(
   try {
     const { id } = await params;
 
-    const product =
-      await getProductById(id);
+    const product = await getProductById(id);
 
     if (!product) {
       return NextResponse.json(
         {
-          error:
-            "Product not found",
+          error: "Product not found",
         },
         {
           status: 404,
@@ -37,89 +39,52 @@ export async function GET(
 
     return NextResponse.json({
       id: product.id,
-
       name: product.name,
 
-      ownerId:
-        product.ownerId,
+      ownerId: product.ownerId,
+      ownerName: product.owner.name,
 
-      ownerName:
-        product.owner.name,
+      categoryId: product.categoryId,
+      category: product.category.name,
 
-      categoryId:
-        product.categoryId,
+      unitId: product.unitId,
+      unit: product.unit.name,
 
-      category:
-        product.category.name,
+      stock: product.stock,
+      lowStock: product.lowStock,
 
-      unitId:
-        product.unitId,
+      active: product.active,
 
-      unit:
-        product.unit.name,
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt,
 
-      stock:
-        product.stock,
+      saleUnits: product.saleUnits.map(
+        (saleUnit) => ({
+          id: saleUnit.id,
 
-      lowStock:
-        product.lowStock,
+          unitId: saleUnit.unitId,
+          unitName: saleUnit.unit.name,
 
-      active:
-        product.active,
+          quantityInBaseUnit:
+            saleUnit.quantityInBaseUnit,
 
-      createdAt:
-        product.createdAt,
+          sellingPrice: Number(
+            saleUnit.sellingPrice,
+          ),
 
-      updatedAt:
-        product.updatedAt,
+          isDefault: saleUnit.isDefault,
+          active: saleUnit.active,
 
-      saleUnits:
-        product.saleUnits.map(
-          (saleUnit) => ({
-            id:
-              saleUnit.id,
-
-            unitId:
-              saleUnit.unitId,
-
-            unitName:
-              saleUnit.unit
-                .name,
-
-            quantityInBaseUnit:
-              saleUnit.quantityInBaseUnit,
-
-            sellingPrice:
-              Number(
-                saleUnit.sellingPrice,
-              ),
-
-            isDefault:
-              saleUnit.isDefault,
-
-            active:
-              saleUnit.active,
-
-            priceRules:
-              saleUnit.priceRules.map(
-                (rule) => ({
-                  id:
-                    rule.id,
-
-                  quantity:
-                    rule.quantity,
-
-                  price:
-                    Number(
-                      rule.price,
-                    ),
-
-                  active:
-                    rule.active,
-                }),
-              ),
-          }),
-        ),
+          priceRules: saleUnit.priceRules.map(
+            (rule) => ({
+              id: rule.id,
+              quantity: rule.quantity,
+              price: Number(rule.price),
+              active: rule.active,
+            }),
+          ),
+        }),
+      ),
     });
   } catch (error) {
     console.error(
@@ -129,8 +94,7 @@ export async function GET(
 
     return NextResponse.json(
       {
-        error:
-          "Failed to fetch product",
+        error: "Failed to fetch product",
       },
       {
         status: 500,
@@ -157,13 +121,10 @@ export async function PATCH(
         name: string;
 
         ownerId: string;
-
         categoryId: string;
-
         unitId: string;
 
         stock: number;
-
         lowStock: number;
 
         active?: boolean;
@@ -178,14 +139,11 @@ export async function PATCH(
           sellingPrice: number;
 
           isDefault?: boolean;
-
           active?: boolean;
 
           priceRules?: Array<{
             quantity: number;
-
             price: number;
-
             active?: boolean;
           }>;
         }>;
@@ -196,20 +154,14 @@ export async function PATCH(
       !body.ownerId ||
       !body.categoryId ||
       !body.unitId ||
-      typeof body.stock !==
-        "number" ||
-      typeof body.lowStock !==
-        "number" ||
-      !Array.isArray(
-        body.saleUnits,
-      ) ||
-      body.saleUnits.length ===
-        0
+      typeof body.stock !== "number" ||
+      typeof body.lowStock !== "number" ||
+      !Array.isArray(body.saleUnits) ||
+      body.saleUnits.length === 0
     ) {
       return NextResponse.json(
         {
-          error:
-            "Invalid product payload",
+          error: "Invalid product payload",
         },
         {
           status: 400,
@@ -217,97 +169,59 @@ export async function PATCH(
       );
     }
 
-    const product =
-      await updateProduct(
-        id,
-        body,
-      );
+    const product = await updateProduct(
+      id,
+      body,
+    );
 
     return NextResponse.json({
       id: product.id,
-
       name: product.name,
 
-      ownerId:
-        product.ownerId,
+      ownerId: product.ownerId,
+      ownerName: product.owner.name,
 
-      ownerName:
-        product.owner.name,
+      categoryId: product.categoryId,
+      category: product.category.name,
 
-      categoryId:
-        product.categoryId,
+      unitId: product.unitId,
+      unit: product.unit.name,
 
-      category:
-        product.category.name,
+      stock: product.stock,
+      lowStock: product.lowStock,
 
-      unitId:
-        product.unitId,
+      active: product.active,
 
-      unit:
-        product.unit.name,
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt,
 
-      stock:
-        product.stock,
+      saleUnits: product.saleUnits.map(
+        (saleUnit) => ({
+          id: saleUnit.id,
 
-      lowStock:
-        product.lowStock,
+          unitId: saleUnit.unitId,
+          unitName: saleUnit.unit.name,
 
-      active:
-        product.active,
+          quantityInBaseUnit:
+            saleUnit.quantityInBaseUnit,
 
-      createdAt:
-        product.createdAt,
+          sellingPrice: Number(
+            saleUnit.sellingPrice,
+          ),
 
-      updatedAt:
-        product.updatedAt,
+          isDefault: saleUnit.isDefault,
+          active: saleUnit.active,
 
-      saleUnits:
-        product.saleUnits.map(
-          (saleUnit) => ({
-            id:
-              saleUnit.id,
-
-            unitId:
-              saleUnit.unitId,
-
-            unitName:
-              saleUnit.unit
-                .name,
-
-            quantityInBaseUnit:
-              saleUnit.quantityInBaseUnit,
-
-            sellingPrice:
-              Number(
-                saleUnit.sellingPrice,
-              ),
-
-            isDefault:
-              saleUnit.isDefault,
-
-            active:
-              saleUnit.active,
-
-            priceRules:
-              saleUnit.priceRules.map(
-                (rule) => ({
-                  id:
-                    rule.id,
-
-                  quantity:
-                    rule.quantity,
-
-                  price:
-                    Number(
-                      rule.price,
-                    ),
-
-                  active:
-                    rule.active,
-                }),
-              ),
-          }),
-        ),
+          priceRules: saleUnit.priceRules.map(
+            (rule) => ({
+              id: rule.id,
+              quantity: rule.quantity,
+              price: Number(rule.price),
+              active: rule.active,
+            }),
+          ),
+        }),
+      ),
     });
   } catch (error) {
     console.error(
@@ -315,29 +229,22 @@ export async function PATCH(
       error,
     );
 
+    // Duplicate product protection
     if (
-      error instanceof
-      DuplicateProductError
+      error instanceof DuplicateProductError
     ) {
       return NextResponse.json(
         {
-          error:
-            error.message,
+          error: error.message,
 
-          code:
-            error.product.active
-              ? "DUPLICATE_ACTIVE_PRODUCT"
-              : "DUPLICATE_ARCHIVED_PRODUCT",
+          code: error.product.active
+            ? "DUPLICATE_ACTIVE_PRODUCT"
+            : "DUPLICATE_ARCHIVED_PRODUCT",
 
           existingProduct: {
-            id:
-              error.product.id,
-
-            name:
-              error.product.name,
-
-            active:
-              error.product.active,
+            id: error.product.id,
+            name: error.product.name,
+            active: error.product.active,
           },
         },
         {
@@ -346,15 +253,31 @@ export async function PATCH(
       );
     }
 
+    // Invalid base-unit / selling-unit setup
     if (
-      error instanceof Error &&
-      error.message ===
-        "Product not found"
+      error instanceof
+      ProductUnitConfigurationError
     ) {
       return NextResponse.json(
         {
-          error:
-            "Product not found",
+          error: error.message,
+
+          code:
+            "INVALID_PRODUCT_UNIT_CONFIGURATION",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    if (
+      error instanceof Error &&
+      error.message === "Product not found"
+    ) {
+      return NextResponse.json(
+        {
+          error: "Product not found",
         },
         {
           status: 404,
@@ -364,8 +287,7 @@ export async function PATCH(
 
     return NextResponse.json(
       {
-        error:
-          "Failed to update product",
+        error: "Failed to update product",
       },
       {
         status: 500,
@@ -400,8 +322,7 @@ export async function DELETE(
 
     return NextResponse.json(
       {
-        error:
-          "Failed to delete product",
+        error: "Failed to delete product",
       },
       {
         status: 500,

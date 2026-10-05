@@ -5,8 +5,15 @@ import {
   useMemo,
   useState,
 } from "react";
-
 import { useRouter } from "next/navigation";
+
+import SellingUnitsEditor from "@/features/products/components/selling-units-editor";
+
+import {
+  createBaseSaleUnit,
+  validateProductUnitConfiguration,
+  type ProductSaleUnitConfig,
+} from "@/lib/product-unit-config";
 
 type OwnerOption = {
   id: string;
@@ -29,21 +36,6 @@ type ExistingProduct = {
   active: boolean;
 };
 
-type PriceRuleInput = {
-  quantity: number;
-  price: number;
-  active: boolean;
-};
-
-type SaleUnitInput = {
-  unitId: string;
-  quantityInBaseUnit: number;
-  sellingPrice: number;
-  isDefault: boolean;
-  active: boolean;
-  priceRules: PriceRuleInput[];
-};
-
 type ProductPayload = {
   name: string;
   ownerId: string;
@@ -52,33 +44,23 @@ type ProductPayload = {
   stock: number;
   lowStock: number;
   active: boolean;
-  saleUnits: SaleUnitInput[];
+  saleUnits: ProductSaleUnitConfig[];
 };
 
-const initialForm: ProductPayload = {
-  name: "",
-  ownerId: "",
-  categoryId: "",
-  unitId: "",
-  stock: 0,
-  lowStock: 0,
-  active: true,
+function createInitialForm(): ProductPayload {
+  return {
+    name: "",
+    ownerId: "",
+    categoryId: "",
+    unitId: "",
+    stock: 0,
+    lowStock: 0,
+    active: true,
+    saleUnits: [],
+  };
+}
 
-  saleUnits: [
-    {
-      unitId: "",
-      quantityInBaseUnit: 1,
-      sellingPrice: 0,
-      isDefault: true,
-      active: true,
-      priceRules: [],
-    },
-  ],
-};
-
-function normalizeProductName(
-  name: string,
-) {
+function normalizeProductName(name: string) {
   return name
     .normalize("NFKC")
     .trim()
@@ -89,25 +71,25 @@ function normalizeProductName(
 export default function AddProductForm() {
   const router = useRouter();
 
-  const [owners, setOwners] =
-    useState<OwnerOption[]>([]);
+  const [owners, setOwners] = useState<
+    OwnerOption[]
+  >([]);
 
   const [categories, setCategories] =
     useState<CategoryOption[]>([]);
 
-  const [units, setUnits] =
-    useState<UnitOption[]>([]);
+  const [units, setUnits] = useState<
+    UnitOption[]
+  >([]);
 
   const [
     existingProducts,
     setExistingProducts,
-  ] = useState<
-    ExistingProduct[]
-  >([]);
+  ] = useState<ExistingProduct[]>([]);
 
   const [form, setForm] =
     useState<ProductPayload>(
-      initialForm,
+      createInitialForm,
     );
 
   const [open, setOpen] =
@@ -121,10 +103,8 @@ export default function AddProductForm() {
     setLoadingOptions,
   ] = useState(false);
 
-  const [
-    formError,
-    setFormError,
-  ] = useState("");
+  const [formError, setFormError] =
+    useState("");
 
   function updateField<
     K extends keyof ProductPayload,
@@ -138,244 +118,60 @@ export default function AddProductForm() {
     }));
   }
 
-  function updateSaleUnit<
-    K extends keyof SaleUnitInput,
-  >(
-    index: number,
-    key: K,
-    value: SaleUnitInput[K],
+  function handleBaseUnitChange(
+    newBaseUnitId: string,
   ) {
-    setForm((prev) => ({
-      ...prev,
+    if (
+      newBaseUnitId === form.unitId
+    ) {
+      return;
+    }
 
-      saleUnits:
-        prev.saleUnits.map(
-          (saleUnit, i) =>
-            i === index
-              ? {
-                  ...saleUnit,
-                  [key]:
-                    value,
-                }
-              : saleUnit,
-        ),
-    }));
-  }
+    if (!newBaseUnitId) {
+      setForm((prev) => ({
+        ...prev,
+        unitId: "",
+        saleUnits: [],
+      }));
 
-  function addSaleUnitRow() {
-    setForm((prev) => ({
-      ...prev,
+      return;
+    }
 
-      saleUnits: [
-        ...prev.saleUnits,
-
-        {
-          unitId: "",
-
-          quantityInBaseUnit:
-            1,
-
-          sellingPrice: 0,
-
-          isDefault: false,
-
-          active: true,
-
-          priceRules: [],
-        },
-      ],
-    }));
-  }
-
-  function removeSaleUnitRow(
-    index: number,
-  ) {
-    setForm((prev) => {
-      const nextSaleUnits =
-        prev.saleUnits.filter(
-          (_, i) =>
-            i !== index,
+    if (form.unitId) {
+      const hasConfiguredSellingUnits =
+        form.saleUnits.length > 1 ||
+        form.saleUnits.some(
+          (saleUnit) =>
+            saleUnit.sellingPrice > 0 ||
+            (saleUnit.priceRules?.length ??
+              0) > 0,
         );
 
-      return {
-        ...prev,
+      if (hasConfiguredSellingUnits) {
+        const confirmed =
+          window.confirm(
+            "Changing the base stock unit will reset the selling-unit setup because all conversions depend on the base unit. Continue?",
+          );
 
-        saleUnits:
-          nextSaleUnits.length >
-          0
-            ? nextSaleUnits.some(
-                (unit) =>
-                  unit.isDefault,
-              )
-              ? nextSaleUnits
-              : nextSaleUnits.map(
-                  (unit, i) => ({
-                    ...unit,
+        if (!confirmed) {
+          return;
+        }
+      }
+    }
 
-                    isDefault:
-                      i === 0,
-                  }),
-                )
-            : prev.saleUnits,
-      };
-    });
-  }
-
-  function addPriceRuleRow(
-    saleUnitIndex: number,
-  ) {
     setForm((prev) => ({
       ...prev,
 
-      saleUnits:
-        prev.saleUnits.map(
-          (
-            saleUnit,
-            index,
-          ) =>
-            index ===
-            saleUnitIndex
-              ? {
-                  ...saleUnit,
+      unitId: newBaseUnitId,
 
-                  priceRules: [
-                    ...saleUnit.priceRules,
-
-                    {
-                      quantity:
-                        1,
-
-                      price: 0,
-
-                      active:
-                        true,
-                    },
-                  ],
-                }
-              : saleUnit,
+      saleUnits: [
+        createBaseSaleUnit(
+          newBaseUnitId,
         ),
+      ],
     }));
-  }
 
-  function updatePriceRule<
-    K extends keyof PriceRuleInput,
-  >(
-    saleUnitIndex: number,
-    ruleIndex: number,
-    key: K,
-    value: PriceRuleInput[K],
-  ) {
-    setForm((prev) => ({
-      ...prev,
-
-      saleUnits:
-        prev.saleUnits.map(
-          (
-            saleUnit,
-            index,
-          ) =>
-            index ===
-            saleUnitIndex
-              ? {
-                  ...saleUnit,
-
-                  priceRules:
-                    saleUnit.priceRules.map(
-                      (
-                        rule,
-                        i,
-                      ) =>
-                        i ===
-                        ruleIndex
-                          ? {
-                              ...rule,
-
-                              [key]:
-                                value,
-                            }
-                          : rule,
-                    ),
-                }
-              : saleUnit,
-        ),
-    }));
-  }
-
-  function removePriceRuleRow(
-    saleUnitIndex: number,
-    ruleIndex: number,
-  ) {
-    setForm((prev) => ({
-      ...prev,
-
-      saleUnits:
-        prev.saleUnits.map(
-          (
-            saleUnit,
-            index,
-          ) =>
-            index ===
-            saleUnitIndex
-              ? {
-                  ...saleUnit,
-
-                  priceRules:
-                    saleUnit.priceRules.filter(
-                      (
-                        _,
-                        i,
-                      ) =>
-                        i !==
-                        ruleIndex,
-                    ),
-                }
-              : saleUnit,
-        ),
-    }));
-  }
-
-  function normalizeSaleUnitsForBaseUnit(
-    baseUnitId: string,
-    saleUnits: SaleUnitInput[],
-  ) {
-    return saleUnits.map(
-      (saleUnit, index) => ({
-        ...saleUnit,
-
-        isDefault:
-          saleUnits.filter(
-            (unit) =>
-              unit.isDefault,
-          ).length === 0
-            ? index === 0
-            : saleUnit.isDefault,
-
-        quantityInBaseUnit:
-          saleUnit.unitId &&
-          saleUnit.unitId ===
-            baseUnitId
-            ? 1
-            : saleUnit.quantityInBaseUnit,
-
-        priceRules:
-          saleUnit.priceRules
-            .filter(
-              (rule) =>
-                rule.quantity >
-                0,
-            )
-            .map((rule) => ({
-              quantity:
-                rule.quantity,
-
-              price:
-                rule.price,
-
-              active:
-                rule.active,
-            })),
-      }),
-    );
+    setFormError("");
   }
 
   const duplicateProduct =
@@ -394,8 +190,7 @@ export default function AddProductForm() {
           (product) =>
             normalizeProductName(
               product.name,
-            ) ===
-            normalizedName,
+            ) === normalizedName,
         ) ?? null
       );
     }, [
@@ -428,9 +223,7 @@ export default function AddProductForm() {
       }
 
       if (
-        !Number.isInteger(
-          form.stock,
-        ) ||
+        !Number.isInteger(form.stock) ||
         form.stock < 0
       ) {
         return "Base stock quantity must be 0 or more.";
@@ -445,129 +238,14 @@ export default function AddProductForm() {
         return "Low stock threshold must be 0 or more.";
       }
 
-      if (
-        form.saleUnits.length ===
-        0
-      ) {
-        return "At least one selling unit is required.";
-      }
-
-      const defaultCount =
-        form.saleUnits.filter(
-          (unit) =>
-            unit.isDefault,
-        ).length;
-
-      if (defaultCount > 1) {
-        return "Only one selling unit can be the default.";
-      }
-
-      const seenUnitIds =
-        new Set<string>();
-
-      for (
-        let i = 0;
-        i <
-        form.saleUnits.length;
-        i += 1
-      ) {
-        const saleUnit =
-          form.saleUnits[i];
-
-        const rowLabel =
-          `Selling unit ${i + 1}`;
-
-        if (!saleUnit.unitId) {
-          return `${rowLabel}: unit is required.`;
-        }
-
-        if (
-          seenUnitIds.has(
-            saleUnit.unitId,
-          )
-        ) {
-          return "Duplicate selling units are not allowed.";
-        }
-
-        seenUnitIds.add(
-          saleUnit.unitId,
+      const unitError =
+        validateProductUnitConfiguration(
+          form.unitId,
+          form.saleUnits,
         );
 
-        if (
-          !Number.isInteger(
-            saleUnit.quantityInBaseUnit,
-          ) ||
-          saleUnit.quantityInBaseUnit <=
-            0
-        ) {
-          return `${rowLabel}: quantity in base unit must be a whole number greater than 0.`;
-        }
-
-        if (
-          !Number.isFinite(
-            saleUnit.sellingPrice,
-          ) ||
-          saleUnit.sellingPrice <=
-            0
-        ) {
-          return `${rowLabel}: selling price must be greater than 0.`;
-        }
-
-        const seenRuleQuantities =
-          new Set<number>();
-
-        for (
-          let j = 0;
-          j <
-          saleUnit.priceRules
-            .length;
-          j += 1
-        ) {
-          const rule =
-            saleUnit.priceRules[j];
-
-          if (
-            !Number.isInteger(
-              rule.quantity,
-            ) ||
-            rule.quantity <=
-              0
-          ) {
-            return `${rowLabel}: each price rule quantity must be a whole number greater than 0.`;
-          }
-
-          if (
-            seenRuleQuantities.has(
-              rule.quantity,
-            )
-          ) {
-            return `${rowLabel}: duplicate price rule quantities are not allowed.`;
-          }
-
-          seenRuleQuantities.add(
-            rule.quantity,
-          );
-
-          if (
-            !Number.isFinite(
-              rule.price,
-            ) ||
-            rule.price <= 0
-          ) {
-            return `${rowLabel}: each price rule price must be greater than 0.`;
-          }
-
-          const normalTotalPrice =
-            saleUnit.sellingPrice *
-            rule.quantity;
-
-          if (
-            rule.price >
-            normalTotalPrice
-          ) {
-            return `${rowLabel}: rule price cannot be higher than the normal total price for that quantity.`;
-          }
-        }
+      if (unitError) {
+        return unitError;
       }
 
       return "";
@@ -595,12 +273,9 @@ export default function AddProductForm() {
             cache: "no-store",
           }),
 
-          fetch(
-            "/api/categories",
-            {
-              cache: "no-store",
-            },
-          ),
+          fetch("/api/categories", {
+            cache: "no-store",
+          }),
 
           fetch("/api/units", {
             cache: "no-store",
@@ -629,38 +304,26 @@ export default function AddProductForm() {
           productsData,
         ] = await Promise.all([
           ownersRes.json(),
-
           categoriesRes.json(),
-
           unitsRes.json(),
-
           productsRes.json(),
         ]);
 
-        setOwners(
-          ownersData,
-        );
+        setOwners(ownersData);
 
         setCategories(
           categoriesData,
         );
 
-        setUnits(
-          unitsData,
-        );
+        setUnits(unitsData);
 
         setExistingProducts(
           (
             productsData as ExistingProduct[]
           ).map((product) => ({
-            id:
-              product.id,
-
-            name:
-              product.name,
-
-            active:
-              product.active,
+            id: product.id,
+            name: product.name,
+            active: product.active,
           })),
         );
       } catch (error) {
@@ -670,19 +333,23 @@ export default function AddProductForm() {
           "Failed to load owners, categories, units, or existing products",
         );
       } finally {
-        setLoadingOptions(
-          false,
-        );
+        setLoadingOptions(false);
       }
     }
 
     void loadOptions();
   }, [open]);
 
+  function closeForm() {
+    setOpen(false);
+    setFormError("");
+    setForm(createInitialForm());
+  }
+
   async function handleSubmit(
-    e: React.FormEvent,
+    event: React.FormEvent,
   ) {
-    e.preventDefault();
+    event.preventDefault();
 
     if (validationError) {
       setFormError(
@@ -693,30 +360,21 @@ export default function AddProductForm() {
     }
 
     setFormError("");
-
     setLoading(true);
 
     try {
-      const payload: ProductPayload =
-        {
-          ...form,
+      const payload: ProductPayload = {
+        ...form,
 
-          name:
-            form.name
-              .trim()
-              .replace(
-                /\s+/g,
-                " ",
-              ),
+        name: form.name
+          .trim()
+          .replace(/\s+/g, " "),
 
-          saleUnits:
-            normalizeSaleUnitsForBaseUnit(
-              form.unitId,
-              form.saleUnits,
-            ),
-        };
+        saleUnits:
+          form.saleUnits,
+      };
 
-      const res = await fetch(
+      const response = await fetch(
         "/api/products",
         {
           method: "POST",
@@ -726,21 +384,18 @@ export default function AddProductForm() {
               "application/json",
           },
 
-          body:
-            JSON.stringify(
-              payload,
-            ),
+          body: JSON.stringify(
+            payload,
+          ),
         },
       );
 
       const data =
-        await res
+        await response
           .json()
-          .catch(
-            () => null,
-          );
+          .catch(() => null);
 
-      if (!res.ok) {
+      if (!response.ok) {
         if (
           data?.code ===
           "DUPLICATE_ARCHIVED_PRODUCT"
@@ -765,13 +420,11 @@ export default function AddProductForm() {
         );
       }
 
-      router.refresh();
-
+      setForm(createInitialForm());
+      setFormError("");
       setOpen(false);
 
-      setForm(initialForm);
-
-      setFormError("");
+      router.refresh();
     } catch (error) {
       console.error(error);
 
@@ -807,20 +460,16 @@ export default function AddProductForm() {
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  Create a product
-                  with selling units
-                  and quantity price
-                  rules.
+                  Create a product using
+                  a clear base stock unit
+                  and selling-unit
+                  conversions.
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={() => {
-                  setOpen(false);
-
-                  setFormError("");
-                }}
+                onClick={closeForm}
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
               >
                 Close
@@ -830,9 +479,8 @@ export default function AddProductForm() {
             {loadingOptions ? (
               <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-sm text-slate-500">
                 Loading owners,
-                categories, units
-                and existing
-                products...
+                categories, units and
+                existing products...
               </div>
             ) : (
               <form
@@ -857,551 +505,10 @@ export default function AddProductForm() {
                     <p className="mt-1">
                       {duplicateProduct.active
                         ? `"${duplicateProduct.name}" is already an active product.`
-                        : `"${duplicateProduct.name}" is archived. Do not create another copy. We will restore the existing product instead.`}
+                        : `"${duplicateProduct.name}" is archived. Do not create another copy. Restore the existing product instead.`}
                     </p>
                   </div>
                 ) : null}
-
-                {formError &&
-                !duplicateProduct ? (
-                  <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                    {formError}
-                  </div>
-                ) : null}
-
-                <div className="grid gap-4 md:grid-cols-2">
-                  <Field label="Product Name">
-                    <input
-                      className={`w-full rounded-xl border px-4 py-3 outline-none ${
-                        duplicateProduct
-                          ? "border-red-300 focus:border-red-500"
-                          : "border-slate-300 focus:border-emerald-500"
-                      }`}
-                      value={
-                        form.name
-                      }
-                      onChange={(e) =>
-                        updateField(
-                          "name",
-                          e.target
-                            .value,
-                        )
-                      }
-                      required
-                    />
-                  </Field>
-
-                  <Field label="Category">
-                    <select
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
-                      value={
-                        form.categoryId
-                      }
-                      onChange={(e) =>
-                        updateField(
-                          "categoryId",
-                          e.target
-                            .value,
-                        )
-                      }
-                      required
-                    >
-                      <option value="">
-                        Select
-                        category
-                      </option>
-
-                      {categories.map(
-                        (
-                          category,
-                        ) => (
-                          <option
-                            key={
-                              category.id
-                            }
-                            value={
-                              category.id
-                            }
-                          >
-                            {
-                              category.name
-                            }
-                          </option>
-                        ),
-                      )}
-                    </select>
-                  </Field>
-
-                  <Field label="Owner">
-                    <select
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
-                      value={
-                        form.ownerId
-                      }
-                      onChange={(e) =>
-                        updateField(
-                          "ownerId",
-                          e.target
-                            .value,
-                        )
-                      }
-                      required
-                    >
-                      <option value="">
-                        Select owner
-                      </option>
-
-                      {owners.map(
-                        (owner) => (
-                          <option
-                            key={
-                              owner.id
-                            }
-                            value={
-                              owner.id
-                            }
-                          >
-                            {
-                              owner.name
-                            }
-                          </option>
-                        ),
-                      )}
-                    </select>
-                  </Field>
-
-                  <Field label="Base Stock Unit">
-                    <select
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
-                      value={
-                        form.unitId
-                      }
-                      onChange={(e) =>
-                        updateField(
-                          "unitId",
-                          e.target
-                            .value,
-                        )
-                      }
-                      required
-                    >
-                      <option value="">
-                        Select base
-                        unit
-                      </option>
-
-                      {units.map(
-                        (unit) => (
-                          <option
-                            key={
-                              unit.id
-                            }
-                            value={
-                              unit.id
-                            }
-                          >
-                            {
-                              unit.name
-                            }
-                          </option>
-                        ),
-                      )}
-                    </select>
-                  </Field>
-
-                  <Field label="Base Stock Quantity">
-                    <input
-                      type="number"
-                      min="0"
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
-                      value={
-                        form.stock
-                      }
-                      onChange={(e) =>
-                        updateField(
-                          "stock",
-                          Number(
-                            e.target
-                              .value,
-                          ),
-                        )
-                      }
-                      required
-                    />
-                  </Field>
-
-                  <Field label="Low Stock Threshold">
-                    <input
-                      type="number"
-                      min="0"
-                      className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
-                      value={
-                        form.lowStock
-                      }
-                      onChange={(e) =>
-                        updateField(
-                          "lowStock",
-                          Number(
-                            e.target
-                              .value,
-                          ),
-                        )
-                      }
-                      required
-                    />
-                  </Field>
-                </div>
-
-                <div className="rounded-2xl border border-slate-200 p-4">
-                  <div className="mb-4 flex items-center justify-between gap-4">
-                    <div>
-                      <h3 className="text-lg font-bold text-slate-900">
-                        Selling Units
-                      </h3>
-
-                      <p className="text-sm text-slate-500">
-                        Add how this
-                        product is sold,
-                        including promo
-                        price rules.
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={
-                        addSaleUnitRow
-                      }
-                      className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                    >
-                      + Add Selling
-                      Unit
-                    </button>
-                  </div>
-
-                  <div className="space-y-4">
-                    {form.saleUnits.map(
-                      (
-                        saleUnit,
-                        index,
-                      ) => {
-                        const isBaseUnitSale =
-                          saleUnit.unitId ===
-                            form.unitId &&
-                          Boolean(
-                            form.unitId,
-                          );
-
-                        return (
-                          <div
-                            key={
-                              index
-                            }
-                            className="rounded-2xl bg-slate-50 p-4"
-                          >
-                            <div className="grid gap-4 md:grid-cols-4">
-                              <Field label="Unit">
-                                <select
-                                  className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
-                                  value={
-                                    saleUnit.unitId
-                                  }
-                                  onChange={(
-                                    e,
-                                  ) =>
-                                    updateSaleUnit(
-                                      index,
-                                      "unitId",
-                                      e
-                                        .target
-                                        .value,
-                                    )
-                                  }
-                                  required
-                                >
-                                  <option value="">
-                                    Select
-                                    unit
-                                  </option>
-
-                                  {units.map(
-                                    (
-                                      unit,
-                                    ) => (
-                                      <option
-                                        key={
-                                          unit.id
-                                        }
-                                        value={
-                                          unit.id
-                                        }
-                                      >
-                                        {
-                                          unit.name
-                                        }
-                                      </option>
-                                    ),
-                                  )}
-                                </select>
-                              </Field>
-
-                              <Field label="Qty in Base Unit">
-                                <input
-                                  type="number"
-                                  min="1"
-                                  disabled={
-                                    isBaseUnitSale
-                                  }
-                                  className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500 disabled:bg-slate-100"
-                                  value={
-                                    isBaseUnitSale
-                                      ? 1
-                                      : saleUnit.quantityInBaseUnit
-                                  }
-                                  onChange={(
-                                    e,
-                                  ) =>
-                                    updateSaleUnit(
-                                      index,
-                                      "quantityInBaseUnit",
-                                      Number(
-                                        e
-                                          .target
-                                          .value,
-                                      ),
-                                    )
-                                  }
-                                  required
-                                />
-                              </Field>
-
-                              <Field label="Default Selling Price">
-                                <input
-                                  type="number"
-                                  min="0.01"
-                                  step="0.01"
-                                  className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
-                                  value={
-                                    saleUnit.sellingPrice
-                                  }
-                                  onChange={(
-                                    e,
-                                  ) =>
-                                    updateSaleUnit(
-                                      index,
-                                      "sellingPrice",
-                                      Number(
-                                        e
-                                          .target
-                                          .value,
-                                      ),
-                                    )
-                                  }
-                                  required
-                                />
-                              </Field>
-
-                              <div className="flex items-end gap-3">
-                                <label className="flex items-center gap-2 text-sm text-slate-700">
-                                  <input
-                                    type="checkbox"
-                                    checked={
-                                      saleUnit.isDefault
-                                    }
-                                    onChange={(
-                                      e,
-                                    ) => {
-                                      const checked =
-                                        e
-                                          .target
-                                          .checked;
-
-                                      setForm(
-                                        (
-                                          prev,
-                                        ) => ({
-                                          ...prev,
-
-                                          saleUnits:
-                                            prev.saleUnits.map(
-                                              (
-                                                unit,
-                                                i,
-                                              ) => ({
-                                                ...unit,
-
-                                                isDefault:
-                                                  checked
-                                                    ? i ===
-                                                      index
-                                                    : i ===
-                                                        index
-                                                      ? false
-                                                      : unit.isDefault,
-                                              }),
-                                            ),
-                                        }),
-                                      );
-                                    }}
-                                  />
-
-                                  Default
-                                </label>
-
-                                {form
-                                  .saleUnits
-                                  .length >
-                                1 ? (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      removeSaleUnitRow(
-                                        index,
-                                      )
-                                    }
-                                    className="rounded-xl border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
-                                  >
-                                    Remove
-                                  </button>
-                                ) : null}
-                              </div>
-                            </div>
-
-                            {isBaseUnitSale ? (
-                              <p className="mt-2 text-xs text-emerald-700">
-                                Base-unit
-                                selling
-                                row is
-                                locked to
-                                quantity
-                                1.
-                              </p>
-                            ) : null}
-
-                            <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
-                              <div className="mb-3 flex items-center justify-between gap-4">
-                                <div>
-                                  <p className="text-sm font-semibold text-slate-800">
-                                    Quantity
-                                    Price
-                                    Rules
-                                  </p>
-
-                                  <p className="text-xs text-slate-500">
-                                    Example:
-                                    3 pieces =
-                                    ₦100
-                                  </p>
-                                </div>
-
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    addPriceRuleRow(
-                                      index,
-                                    )
-                                  }
-                                  className="rounded-lg border border-slate-300 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
-                                >
-                                  + Add Rule
-                                </button>
-                              </div>
-
-                              <div className="space-y-3">
-                                {saleUnit
-                                  .priceRules
-                                  .length ===
-                                0 ? (
-                                  <p className="text-xs text-slate-500">
-                                    No rules
-                                    yet.
-                                  </p>
-                                ) : (
-                                  saleUnit.priceRules.map(
-                                    (
-                                      rule,
-                                      ruleIndex,
-                                    ) => (
-                                      <div
-                                        key={
-                                          ruleIndex
-                                        }
-                                        className="grid gap-3 md:grid-cols-3"
-                                      >
-                                        <input
-                                          type="number"
-                                          min="1"
-                                          value={
-                                            rule.quantity
-                                          }
-                                          onChange={(
-                                            e,
-                                          ) =>
-                                            updatePriceRule(
-                                              index,
-                                              ruleIndex,
-                                              "quantity",
-                                              Number(
-                                                e
-                                                  .target
-                                                  .value,
-                                              ),
-                                            )
-                                          }
-                                          placeholder="Quantity"
-                                          className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
-                                        />
-
-                                        <input
-                                          type="number"
-                                          min="0.01"
-                                          step="0.01"
-                                          value={
-                                            rule.price
-                                          }
-                                          onChange={(
-                                            e,
-                                          ) =>
-                                            updatePriceRule(
-                                              index,
-                                              ruleIndex,
-                                              "price",
-                                              Number(
-                                                e
-                                                  .target
-                                                  .value,
-                                              ),
-                                            )
-                                          }
-                                          placeholder="Rule price"
-                                          className="rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
-                                        />
-
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            removePriceRuleRow(
-                                              index,
-                                              ruleIndex,
-                                            )
-                                          }
-                                          className="rounded-xl border border-red-200 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50"
-                                        >
-                                          Remove
-                                          Rule
-                                        </button>
-                                      </div>
-                                    ),
-                                  )
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      },
-                    )}
-                  </div>
-                </div>
 
                 {formError ? (
                   <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
@@ -1409,14 +516,262 @@ export default function AddProductForm() {
                   </div>
                 ) : null}
 
+                <section className="rounded-2xl border border-slate-200 p-4">
+                  <div className="mb-4">
+                    <h3 className="text-lg font-bold text-slate-900">
+                      Product Details
+                    </h3>
+
+                    <p className="mt-1 text-sm text-slate-500">
+                      Start with the
+                      product and the
+                      smallest unit you
+                      use to count its
+                      stock.
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <Field label="Product Name">
+                      <input
+                        className={`w-full rounded-xl border px-4 py-3 outline-none ${
+                          duplicateProduct
+                            ? "border-red-300 focus:border-red-500"
+                            : "border-slate-300 focus:border-emerald-500"
+                        }`}
+                        value={
+                          form.name
+                        }
+                        onChange={(e) =>
+                          updateField(
+                            "name",
+                            e.target
+                              .value,
+                          )
+                        }
+                        required
+                      />
+                    </Field>
+
+                    <Field label="Category">
+                      <select
+                        className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
+                        value={
+                          form.categoryId
+                        }
+                        onChange={(e) =>
+                          updateField(
+                            "categoryId",
+                            e.target
+                              .value,
+                          )
+                        }
+                        required
+                      >
+                        <option value="">
+                          Select category
+                        </option>
+
+                        {categories.map(
+                          (
+                            category,
+                          ) => (
+                            <option
+                              key={
+                                category.id
+                              }
+                              value={
+                                category.id
+                              }
+                            >
+                              {
+                                category.name
+                              }
+                            </option>
+                          ),
+                        )}
+                      </select>
+                    </Field>
+
+                    <Field label="Owner">
+                      <select
+                        className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
+                        value={
+                          form.ownerId
+                        }
+                        onChange={(e) =>
+                          updateField(
+                            "ownerId",
+                            e.target
+                              .value,
+                          )
+                        }
+                        required
+                      >
+                        <option value="">
+                          Select owner
+                        </option>
+
+                        {owners.map(
+                          (owner) => (
+                            <option
+                              key={
+                                owner.id
+                              }
+                              value={
+                                owner.id
+                              }
+                            >
+                              {
+                                owner.name
+                              }
+                            </option>
+                          ),
+                        )}
+                      </select>
+                    </Field>
+
+                    <Field label="Base Stock Unit">
+                      <select
+                        className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
+                        value={
+                          form.unitId
+                        }
+                        onChange={(e) =>
+                          handleBaseUnitChange(
+                            e.target
+                              .value,
+                          )
+                        }
+                        required
+                      >
+                        <option value="">
+                          Select base unit
+                        </option>
+
+                        {units.map(
+                          (unit) => (
+                            <option
+                              key={
+                                unit.id
+                              }
+                              value={
+                                unit.id
+                              }
+                            >
+                              {
+                                unit.name
+                              }
+                            </option>
+                          ),
+                        )}
+                      </select>
+
+                      <p className="mt-2 text-xs leading-5 text-slate-500">
+                        Choose the
+                        smallest unit
+                        you normally
+                        count in
+                        inventory.
+                        Example:
+                        Piece, Sachet
+                        or Bottle.
+                      </p>
+                    </Field>
+
+                    <Field label="Opening Stock">
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
+                        value={
+                          form.stock
+                        }
+                        onChange={(e) =>
+                          updateField(
+                            "stock",
+                            Number(
+                              e.target
+                                .value,
+                            ),
+                          )
+                        }
+                        required
+                      />
+
+                      <p className="mt-2 text-xs text-slate-500">
+                        Enter this in
+                        the selected
+                        base stock
+                        unit.
+                      </p>
+                    </Field>
+
+                    <Field label="Low Stock Threshold">
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
+                        value={
+                          form.lowStock
+                        }
+                        onChange={(e) =>
+                          updateField(
+                            "lowStock",
+                            Number(
+                              e.target
+                                .value,
+                            ),
+                          )
+                        }
+                        required
+                      />
+                    </Field>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-slate-200 p-4">
+                  <div className="mb-4">
+                    <h3 className="text-lg font-bold text-slate-900">
+                      Selling Units
+                    </h3>
+
+                    <p className="mt-1 text-sm leading-6 text-slate-500">
+                      The base selling
+                      unit is created
+                      automatically.
+                      Add larger units
+                      by specifying how
+                      many base units
+                      they contain.
+                    </p>
+                  </div>
+
+                  <SellingUnitsEditor
+                    baseUnitId={
+                      form.unitId
+                    }
+                    units={units}
+                    value={
+                      form.saleUnits
+                    }
+                    onChange={(
+                      saleUnits,
+                    ) =>
+                      updateField(
+                        "saleUnits",
+                        saleUnits,
+                      )
+                    }
+                  />
+                </section>
+
                 <div className="flex justify-end gap-3 pt-2">
                   <button
                     type="button"
-                    onClick={() => {
-                      setOpen(false);
-
-                      setFormError("");
-                    }}
+                    onClick={closeForm}
                     className="rounded-xl border border-slate-300 px-4 py-2 font-medium text-slate-700 hover:bg-slate-50"
                   >
                     Cancel

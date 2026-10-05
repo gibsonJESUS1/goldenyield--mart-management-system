@@ -6,103 +6,61 @@ import {
   getProducts,
 } from "@/lib/db/product";
 
+import {
+  ProductUnitConfigurationError,
+} from "@/lib/product-unit-config";
+
 export async function GET() {
   try {
-    const products =
-      await getProducts();
+    const products = await getProducts();
 
-    const normalized = products.map(
-      (product) => ({
-        id: product.id,
+    const normalized = products.map((product) => ({
+      id: product.id,
+      name: product.name,
 
-        name: product.name,
+      ownerId: product.ownerId,
+      ownerName: product.owner.name,
 
-        ownerId:
-          product.ownerId,
+      categoryId: product.categoryId,
+      category: product.category.name,
 
-        ownerName:
-          product.owner.name,
+      unitId: product.unitId,
+      unit: product.unit.name,
 
-        categoryId:
-          product.categoryId,
+      stock: product.stock,
+      lowStock: product.lowStock,
 
-        category:
-          product.category.name,
+      active: product.active,
 
-        unitId:
-          product.unitId,
+      createdAt: product.createdAt,
+      updatedAt: product.updatedAt,
 
-        unit:
-          product.unit.name,
+      saleUnits: product.saleUnits.map((saleUnit) => ({
+        id: saleUnit.id,
 
-        stock:
-          product.stock,
+        unitId: saleUnit.unitId,
+        unitName: saleUnit.unit.name,
 
-        lowStock:
-          product.lowStock,
+        quantityInBaseUnit:
+          saleUnit.quantityInBaseUnit,
 
-        active:
-          product.active,
+        sellingPrice: Number(
+          saleUnit.sellingPrice,
+        ),
 
-        createdAt:
-          product.createdAt,
+        isDefault: saleUnit.isDefault,
+        active: saleUnit.active,
 
-        updatedAt:
-          product.updatedAt,
+        priceRules: saleUnit.priceRules.map((rule) => ({
+          id: rule.id,
+          quantity: rule.quantity,
+          price: Number(rule.price),
+          active: rule.active,
+        })),
+      })),
+    }));
 
-        saleUnits:
-          product.saleUnits.map(
-            (saleUnit) => ({
-              id:
-                saleUnit.id,
-
-              unitId:
-                saleUnit.unitId,
-
-              unitName:
-                saleUnit.unit
-                  .name,
-
-              quantityInBaseUnit:
-                saleUnit.quantityInBaseUnit,
-
-              sellingPrice:
-                Number(
-                  saleUnit.sellingPrice,
-                ),
-
-              isDefault:
-                saleUnit.isDefault,
-
-              active:
-                saleUnit.active,
-
-              priceRules:
-                saleUnit.priceRules.map(
-                  (rule) => ({
-                    id:
-                      rule.id,
-
-                    quantity:
-                      rule.quantity,
-
-                    price:
-                      Number(
-                        rule.price,
-                      ),
-
-                    active:
-                      rule.active,
-                  }),
-                ),
-            }),
-          ),
-      }),
-    );
-
-    return NextResponse.json(
-      normalized,
-    );
+    return NextResponse.json(normalized);
   } catch (error) {
     console.error(
       "GET /api/products error:",
@@ -111,8 +69,7 @@ export async function GET() {
 
     return NextResponse.json(
       {
-        error:
-          "Failed to fetch products",
+        error: "Failed to fetch products",
       },
       {
         status: 500,
@@ -121,22 +78,17 @@ export async function GET() {
   }
 }
 
-export async function POST(
-  request: Request,
-) {
+export async function POST(request: Request) {
   try {
     const body =
       (await request.json()) as {
         name: string;
 
         ownerId: string;
-
         categoryId: string;
-
         unitId: string;
 
         stock: number;
-
         lowStock: number;
 
         active?: boolean;
@@ -149,14 +101,11 @@ export async function POST(
           sellingPrice: number;
 
           isDefault?: boolean;
-
           active?: boolean;
 
           priceRules?: Array<{
             quantity: number;
-
             price: number;
-
             active?: boolean;
           }>;
         }>;
@@ -167,20 +116,14 @@ export async function POST(
       !body.ownerId ||
       !body.categoryId ||
       !body.unitId ||
-      typeof body.stock !==
-        "number" ||
-      typeof body.lowStock !==
-        "number" ||
-      !Array.isArray(
-        body.saleUnits,
-      ) ||
-      body.saleUnits.length ===
-        0
+      typeof body.stock !== "number" ||
+      typeof body.lowStock !== "number" ||
+      !Array.isArray(body.saleUnits) ||
+      body.saleUnits.length === 0
     ) {
       return NextResponse.json(
         {
-          error:
-            "Invalid product payload",
+          error: "Invalid product payload",
         },
         {
           status: 400,
@@ -188,95 +131,55 @@ export async function POST(
       );
     }
 
-    const product =
-      await createProduct(body);
+    const product = await createProduct(body);
 
     return NextResponse.json(
       {
         id: product.id,
-
         name: product.name,
 
-        ownerId:
-          product.ownerId,
+        ownerId: product.ownerId,
+        ownerName: product.owner.name,
 
-        ownerName:
-          product.owner.name,
+        categoryId: product.categoryId,
+        category: product.category.name,
 
-        categoryId:
-          product.categoryId,
+        unitId: product.unitId,
+        unit: product.unit.name,
 
-        category:
-          product.category.name,
+        stock: product.stock,
+        lowStock: product.lowStock,
 
-        unitId:
-          product.unitId,
+        active: product.active,
 
-        unit:
-          product.unit.name,
+        createdAt: product.createdAt,
+        updatedAt: product.updatedAt,
 
-        stock:
-          product.stock,
+        saleUnits: product.saleUnits.map((saleUnit) => ({
+          id: saleUnit.id,
 
-        lowStock:
-          product.lowStock,
+          unitId: saleUnit.unitId,
+          unitName: saleUnit.unit.name,
 
-        active:
-          product.active,
+          quantityInBaseUnit:
+            saleUnit.quantityInBaseUnit,
 
-        createdAt:
-          product.createdAt,
+          sellingPrice: Number(
+            saleUnit.sellingPrice,
+          ),
 
-        updatedAt:
-          product.updatedAt,
+          isDefault: saleUnit.isDefault,
+          active: saleUnit.active,
 
-        saleUnits:
-          product.saleUnits.map(
-            (saleUnit) => ({
-              id:
-                saleUnit.id,
-
-              unitId:
-                saleUnit.unitId,
-
-              unitName:
-                saleUnit.unit
-                  .name,
-
-              quantityInBaseUnit:
-                saleUnit.quantityInBaseUnit,
-
-              sellingPrice:
-                Number(
-                  saleUnit.sellingPrice,
-                ),
-
-              isDefault:
-                saleUnit.isDefault,
-
-              active:
-                saleUnit.active,
-
-              priceRules:
-                saleUnit.priceRules.map(
-                  (rule) => ({
-                    id:
-                      rule.id,
-
-                    quantity:
-                      rule.quantity,
-
-                    price:
-                      Number(
-                        rule.price,
-                      ),
-
-                    active:
-                      rule.active,
-                  }),
-                ),
+          priceRules: saleUnit.priceRules.map(
+            (rule) => ({
+              id: rule.id,
+              quantity: rule.quantity,
+              price: Number(rule.price),
+              active: rule.active,
             }),
           ),
+        })),
       },
       {
         status: 201,
@@ -288,29 +191,20 @@ export async function POST(
       error,
     );
 
-    if (
-      error instanceof
-      DuplicateProductError
-    ) {
+    // Prevent duplicate products
+    if (error instanceof DuplicateProductError) {
       return NextResponse.json(
         {
-          error:
-            error.message,
+          error: error.message,
 
-          code:
-            error.product.active
-              ? "DUPLICATE_ACTIVE_PRODUCT"
-              : "DUPLICATE_ARCHIVED_PRODUCT",
+          code: error.product.active
+            ? "DUPLICATE_ACTIVE_PRODUCT"
+            : "DUPLICATE_ARCHIVED_PRODUCT",
 
           existingProduct: {
-            id:
-              error.product.id,
-
-            name:
-              error.product.name,
-
-            active:
-              error.product.active,
+            id: error.product.id,
+            name: error.product.name,
+            active: error.product.active,
           },
         },
         {
@@ -319,10 +213,26 @@ export async function POST(
       );
     }
 
+    // Protect base-unit / selling-unit configuration
+    if (
+      error instanceof ProductUnitConfigurationError
+    ) {
+      return NextResponse.json(
+        {
+          error: error.message,
+
+          code:
+            "INVALID_PRODUCT_UNIT_CONFIGURATION",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
     return NextResponse.json(
       {
-        error:
-          "Failed to create product",
+        error: "Failed to create product",
       },
       {
         status: 500,
