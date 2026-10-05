@@ -34,6 +34,7 @@ export type UpdateProductInput = {
   stock: number;
   lowStock: number;
   active?: boolean;
+
   saleUnits: Array<{
     id?: string;
     unitId: string;
@@ -45,98 +46,237 @@ export type UpdateProductInput = {
   }>;
 };
 
+export type DuplicateProductInfo = {
+  id: string;
+  name: string;
+  active: boolean;
+};
+
+export class DuplicateProductError extends Error {
+  product: DuplicateProductInfo;
+
+  constructor(product: DuplicateProductInfo) {
+    super(
+      product.active
+        ? `Product "${product.name}" already exists.`
+        : `Product "${product.name}" already exists but is archived.`,
+    );
+
+    this.name = "DuplicateProductError";
+    this.product = product;
+  }
+}
+
+export function normalizeProductName(name: string) {
+  return name
+    .normalize("NFKC")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+export async function findDuplicateProductByName(
+  name: string,
+  excludeProductId?: string,
+): Promise<DuplicateProductInfo | null> {
+  const normalizedName = normalizeProductName(name);
+
+  if (!normalizedName) {
+    return null;
+  }
+
+  const products = await prisma.product.findMany({
+    where: excludeProductId
+      ? {
+          id: {
+            not: excludeProductId,
+          },
+        }
+      : undefined,
+
+    select: {
+      id: true,
+      name: true,
+      active: true,
+    },
+  });
+
+  const duplicate = products.find(
+    (product) =>
+      normalizeProductName(product.name) === normalizedName,
+  );
+
+  return duplicate ?? null;
+}
+
 export async function getProducts() {
   return prisma.product.findMany({
     include: {
       owner: true,
       category: true,
       unit: true,
+
       saleUnits: {
         include: {
           unit: true,
+
           priceRules: {
-            where: { active: true },
-            orderBy: { quantity: "desc" },
+            where: {
+              active: true,
+            },
+
+            orderBy: {
+              quantity: "desc",
+            },
           },
         },
-        orderBy: { createdAt: "asc" },
+
+        orderBy: {
+          createdAt: "asc",
+        },
       },
     },
-    orderBy: { createdAt: "desc" },
+
+    orderBy: {
+      createdAt: "desc",
+    },
   });
 }
 
 export async function getProductById(id: string) {
   return prisma.product.findUnique({
-    where: { id },
+    where: {
+      id,
+    },
+
     include: {
       owner: true,
       category: true,
       unit: true,
+
       saleUnits: {
         include: {
           unit: true,
+
           priceRules: {
-            where: { active: true },
-            orderBy: { quantity: "desc" },
+            where: {
+              active: true,
+            },
+
+            orderBy: {
+              quantity: "desc",
+            },
           },
         },
-        orderBy: { createdAt: "asc" },
+
+        orderBy: {
+          createdAt: "asc",
+        },
       },
+
       stockMovements: {
-        orderBy: { createdAt: "desc" },
+        orderBy: {
+          createdAt: "desc",
+        },
+
         take: 20,
       },
     },
   });
 }
 
-export async function createProduct(data: CreateProductInput) {
+export async function createProduct(
+  data: CreateProductInput,
+) {
+  const cleanedName = data.name
+    .trim()
+    .replace(/\s+/g, " ");
+
+  const duplicate =
+    await findDuplicateProductByName(cleanedName);
+
+  if (duplicate) {
+    throw new DuplicateProductError(duplicate);
+  }
+
   return prisma.product.create({
     data: {
-      name: data.name,
+      name: cleanedName,
+
       ownerId: data.ownerId,
+
       categoryId: data.categoryId,
+
       unitId: data.unitId,
+
       stock: data.stock,
+
       lowStock: data.lowStock,
+
       active: data.active ?? true,
+
       saleUnits: {
-        create: data.saleUnits.map((saleUnit) => ({
-          unitId: saleUnit.unitId,
-          quantityInBaseUnit: saleUnit.quantityInBaseUnit,
-          sellingPrice: saleUnit.sellingPrice,
-          isDefault: saleUnit.isDefault ?? false,
-          active: saleUnit.active ?? true,
-          ...(saleUnit.priceRules && saleUnit.priceRules.length > 0
-            ? {
-                priceRules: {
-                  create: saleUnit.priceRules.map((rule) => ({
-                    quantity: rule.quantity,
-                    price: rule.price,
-                    active: rule.active ?? true,
-                  })),
-                },
-              }
-            : {}),
-        })),
+        create: data.saleUnits.map(
+          (saleUnit) => ({
+            unitId: saleUnit.unitId,
+
+            quantityInBaseUnit:
+              saleUnit.quantityInBaseUnit,
+
+            sellingPrice:
+              saleUnit.sellingPrice,
+
+            isDefault:
+              saleUnit.isDefault ?? false,
+
+            active:
+              saleUnit.active ?? true,
+
+            ...(saleUnit.priceRules &&
+            saleUnit.priceRules.length > 0
+              ? {
+                  priceRules: {
+                    create:
+                      saleUnit.priceRules.map(
+                        (rule) => ({
+                          quantity:
+                            rule.quantity,
+
+                          price:
+                            rule.price,
+
+                          active:
+                            rule.active ??
+                            true,
+                        }),
+                      ),
+                  },
+                }
+              : {}),
+          }),
+        ),
       },
+
       ...(data.stock > 0
         ? {
             stockMovements: {
               create: {
                 type: "IN",
+
                 quantity: data.stock,
+
                 note: "Initial stock",
               },
             },
           }
         : {}),
     },
+
     include: {
       owner: true,
       category: true,
       unit: true,
+
       saleUnits: {
         include: {
           unit: true,
@@ -147,58 +287,114 @@ export async function createProduct(data: CreateProductInput) {
   });
 }
 
-export async function updateProduct(id: string, data: UpdateProductInput) {
+export async function updateProduct(
+  id: string,
+  data: UpdateProductInput,
+) {
+  const cleanedName = data.name
+    .trim()
+    .replace(/\s+/g, " ");
+
+  const duplicate =
+    await findDuplicateProductByName(
+      cleanedName,
+      id,
+    );
+
+  if (duplicate) {
+    throw new DuplicateProductError(duplicate);
+  }
+
   return prisma.$transaction(async (tx) => {
-    const existingProduct = await tx.product.findUnique({
-      where: { id },
-      include: {
-        saleUnits: {
-          include: {
-            priceRules: true,
+    const existingProduct =
+      await tx.product.findUnique({
+        where: {
+          id,
+        },
+
+        include: {
+          saleUnits: {
+            include: {
+              priceRules: true,
+            },
           },
         },
-      },
-    });
+      });
 
     if (!existingProduct) {
-      throw new Error("Product not found");
+      throw new Error(
+        "Product not found",
+      );
     }
 
-    const existingSaleUnits = existingProduct.saleUnits;
-    const existingSaleUnitIds = new Set(
-      existingSaleUnits.map((unit) => unit.id),
-    );
+    const existingSaleUnits =
+      existingProduct.saleUnits;
 
-    const incomingSaleUnitIds = new Set(
-      data.saleUnits
-        .map((unit) => unit.id)
-        .filter((unitId): unitId is string => Boolean(unitId)),
-    );
+    const existingSaleUnitIds =
+      new Set(
+        existingSaleUnits.map(
+          (unit) => unit.id,
+        ),
+      );
 
-    const removedSaleUnits = existingSaleUnits.filter(
-      (unit) => !incomingSaleUnitIds.has(unit.id),
-    );
+    const incomingSaleUnitIds =
+      new Set(
+        data.saleUnits
+          .map((unit) => unit.id)
+          .filter(
+            (
+              unitId,
+            ): unitId is string =>
+              Boolean(unitId),
+          ),
+      );
+
+    const removedSaleUnits =
+      existingSaleUnits.filter(
+        (unit) =>
+          !incomingSaleUnitIds.has(
+            unit.id,
+          ),
+      );
 
     await tx.product.update({
-      where: { id },
+      where: {
+        id,
+      },
+
       data: {
-        name: data.name,
+        name: cleanedName,
+
         ownerId: data.ownerId,
-        categoryId: data.categoryId,
+
+        categoryId:
+          data.categoryId,
+
         unitId: data.unitId,
+
         stock: data.stock,
+
         lowStock: data.lowStock,
-        active: data.active ?? true,
+
+        active:
+          data.active ?? true,
       },
     });
 
     for (const saleUnit of data.saleUnits) {
-      if (saleUnit.id && existingSaleUnitIds.has(saleUnit.id)) {
-        const usageCount = await tx.saleItem.count({
-          where: {
-            saleUnitId: saleUnit.id,
-          },
-        });
+      if (
+        saleUnit.id &&
+        existingSaleUnitIds.has(
+          saleUnit.id,
+        )
+      ) {
+        const usageCount =
+          await tx.saleItem.count({
+            where: {
+              saleUnitId:
+                saleUnit.id,
+            },
+          });
 
         const updateData: {
           unitId?: string;
@@ -207,75 +403,138 @@ export async function updateProduct(id: string, data: UpdateProductInput) {
           isDefault: boolean;
           active: boolean;
         } = {
-          sellingPrice: saleUnit.sellingPrice,
-          isDefault: saleUnit.isDefault ?? false,
-          active: saleUnit.active ?? true,
+          sellingPrice:
+            saleUnit.sellingPrice,
+
+          isDefault:
+            saleUnit.isDefault ??
+            false,
+
+          active:
+            saleUnit.active ?? true,
         };
 
         if (usageCount === 0) {
-          updateData.unitId = saleUnit.unitId;
-          updateData.quantityInBaseUnit = saleUnit.quantityInBaseUnit;
+          updateData.unitId =
+            saleUnit.unitId;
+
+          updateData.quantityInBaseUnit =
+            saleUnit.quantityInBaseUnit;
         }
 
         await tx.productSaleUnit.update({
-          where: { id: saleUnit.id },
+          where: {
+            id: saleUnit.id,
+          },
+
           data: updateData,
         });
 
-        await tx.productSaleUnitPriceRule.deleteMany({
-          where: {
-            productSaleUnitId: saleUnit.id,
+        await tx.productSaleUnitPriceRule.deleteMany(
+          {
+            where: {
+              productSaleUnitId:
+                saleUnit.id,
+            },
           },
-        });
+        );
 
-        if (saleUnit.priceRules && saleUnit.priceRules.length > 0) {
-          await tx.productSaleUnitPriceRule.createMany({
-            data: saleUnit.priceRules.map((rule) => ({
-              productSaleUnitId: saleUnit.id!,
-              quantity: rule.quantity,
-              price: rule.price,
-              active: rule.active ?? true,
-            })),
-          });
+        if (
+          saleUnit.priceRules &&
+          saleUnit.priceRules.length >
+            0
+        ) {
+          await tx.productSaleUnitPriceRule.createMany(
+            {
+              data:
+                saleUnit.priceRules.map(
+                  (rule) => ({
+                    productSaleUnitId:
+                      saleUnit.id!,
+
+                    quantity:
+                      rule.quantity,
+
+                    price:
+                      rule.price,
+
+                    active:
+                      rule.active ??
+                      true,
+                  }),
+                ),
+            },
+          );
         }
       } else {
-        await tx.productSaleUnit.create({
-          data: {
-            productId: id,
-            unitId: saleUnit.unitId,
-            quantityInBaseUnit: saleUnit.quantityInBaseUnit,
-            sellingPrice: saleUnit.sellingPrice,
-            isDefault: saleUnit.isDefault ?? false,
-            active: saleUnit.active ?? true,
-            ...(saleUnit.priceRules && saleUnit.priceRules.length > 0
-              ? {
-                  priceRules: {
-                    create: saleUnit.priceRules.map((rule) => ({
-                      quantity: rule.quantity,
-                      price: rule.price,
-                      active: rule.active ?? true,
-                    })),
-                  },
-                }
-              : {}),
+        await tx.productSaleUnit.create(
+          {
+            data: {
+              productId: id,
+
+              unitId:
+                saleUnit.unitId,
+
+              quantityInBaseUnit:
+                saleUnit.quantityInBaseUnit,
+
+              sellingPrice:
+                saleUnit.sellingPrice,
+
+              isDefault:
+                saleUnit.isDefault ??
+                false,
+
+              active:
+                saleUnit.active ??
+                true,
+
+              ...(saleUnit.priceRules &&
+              saleUnit.priceRules
+                .length > 0
+                ? {
+                    priceRules: {
+                      create:
+                        saleUnit.priceRules.map(
+                          (rule) => ({
+                            quantity:
+                              rule.quantity,
+
+                            price:
+                              rule.price,
+
+                            active:
+                              rule.active ??
+                              true,
+                          }),
+                        ),
+                    },
+                  }
+                : {}),
+            },
           },
-        });
+        );
       }
     }
 
     for (const removedSaleUnit of removedSaleUnits) {
-      const usageCount = await tx.saleItem.count({
-        where: {
-          saleUnitId: removedSaleUnit.id,
-        },
-      });
-
-      if (usageCount === 0) {
-        await tx.productSaleUnitPriceRule.deleteMany({
+      const usageCount =
+        await tx.saleItem.count({
           where: {
-            productSaleUnitId: removedSaleUnit.id,
+            saleUnitId:
+              removedSaleUnit.id,
           },
         });
+
+      if (usageCount === 0) {
+        await tx.productSaleUnitPriceRule.deleteMany(
+          {
+            where: {
+              productSaleUnitId:
+                removedSaleUnit.id,
+            },
+          },
+        );
 
         await tx.productSaleUnit.delete({
           where: {
@@ -287,6 +546,7 @@ export async function updateProduct(id: string, data: UpdateProductInput) {
           where: {
             id: removedSaleUnit.id,
           },
+
           data: {
             active: false,
             isDefault: false,
@@ -296,17 +556,24 @@ export async function updateProduct(id: string, data: UpdateProductInput) {
     }
 
     return tx.product.findUniqueOrThrow({
-      where: { id },
+      where: {
+        id,
+      },
+
       include: {
         owner: true,
         category: true,
         unit: true,
+
         saleUnits: {
           include: {
             unit: true,
             priceRules: true,
           },
-          orderBy: { createdAt: "asc" },
+
+          orderBy: {
+            createdAt: "asc",
+          },
         },
       },
     });
@@ -317,27 +584,47 @@ export async function reduceProductStock(
   productId: string,
   quantityToReduce: number,
 ) {
-  const product = await prisma.product.findUnique({
-    where: { id: productId },
-  });
+  const product =
+    await prisma.product.findUnique({
+      where: {
+        id: productId,
+      },
+    });
 
   if (!product) {
-    throw new Error("Product not found");
+    throw new Error(
+      "Product not found",
+    );
   }
 
-  if (product.stock < quantityToReduce) {
-    throw new Error("Insufficient stock");
+  if (
+    product.stock <
+    quantityToReduce
+  ) {
+    throw new Error(
+      "Insufficient stock",
+    );
   }
 
   return prisma.product.update({
-    where: { id: productId },
+    where: {
+      id: productId,
+    },
+
     data: {
-      stock: product.stock - quantityToReduce,
+      stock:
+        product.stock -
+        quantityToReduce,
+
       stockMovements: {
         create: {
           type: "OUT",
-          quantity: quantityToReduce,
-          note: "Stock reduced from sale",
+
+          quantity:
+            quantityToReduce,
+
+          note:
+            "Stock reduced from sale",
         },
       },
     },
@@ -349,30 +636,49 @@ export async function restockProduct(
   quantityToAdd: number,
   note?: string,
 ) {
-  const product = await prisma.product.findUnique({
-    where: { id: productId },
-  });
+  const product =
+    await prisma.product.findUnique({
+      where: {
+        id: productId,
+      },
+    });
 
   if (!product) {
-    throw new Error("Product not found");
+    throw new Error(
+      "Product not found",
+    );
   }
 
   if (quantityToAdd <= 0) {
-    throw new Error("Quantity must be greater than zero");
+    throw new Error(
+      "Quantity must be greater than zero",
+    );
   }
 
   return prisma.product.update({
-    where: { id: productId },
+    where: {
+      id: productId,
+    },
+
     data: {
-      stock: product.stock + quantityToAdd,
+      stock:
+        product.stock +
+        quantityToAdd,
+
       stockMovements: {
         create: {
           type: "IN",
-          quantity: quantityToAdd,
-          note: note || "Manual restock",
+
+          quantity:
+            quantityToAdd,
+
+          note:
+            note ||
+            "Manual restock",
         },
       },
     },
+
     include: {
       owner: true,
       category: true,
@@ -392,12 +698,19 @@ export async function getStockMovements() {
         },
       },
     },
-    orderBy: { createdAt: "desc" },
+
+    orderBy: {
+      createdAt: "desc",
+    },
   });
 }
 
-export async function deleteProduct(id: string) {
+export async function deleteProduct(
+  id: string,
+) {
   return prisma.product.delete({
-    where: { id },
+    where: {
+      id,
+    },
   });
 }
