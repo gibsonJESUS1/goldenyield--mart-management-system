@@ -5,6 +5,11 @@ import {
   ProductUnitConfigurationError,
 } from "@/lib/product-unit-config";
 
+import {
+  assertSellingPricesNotBelowCost,
+  ProductPricingError,
+} from "@/lib/product-pricing";
+
 export type CreatePriceRuleInput = {
   quantity: number;
   price: number;
@@ -27,6 +32,10 @@ export type CreateProductInput = {
   unitId: string;
   stock: number;
   lowStock: number;
+
+  // Cost of ONE base unit.
+  currentCostPrice?: number | null;
+
   active?: boolean;
   saleUnits: CreateProductSaleUnitInput[];
 };
@@ -72,7 +81,9 @@ export class DuplicateProductError extends Error {
   }
 }
 
-export function normalizeProductName(name: string) {
+export function normalizeProductName(
+  name: string,
+) {
   return name
     .normalize("NFKC")
     .trim()
@@ -210,6 +221,47 @@ export async function createProduct(
     data.saleUnits,
   );
 
+  const costPrice =
+    data.currentCostPrice != null
+      ? Number(
+          data.currentCostPrice,
+        )
+      : null;
+
+  if (
+    costPrice != null &&
+    (!Number.isFinite(costPrice) ||
+      costPrice <= 0)
+  ) {
+    throw new ProductPricingError(
+      "Cost price must be greater than zero.",
+    );
+  }
+
+  /*
+   * If we are introducing stock into the
+   * system, we need to know what that stock
+   * actually cost.
+   */
+  if (
+    data.stock > 0 &&
+    costPrice == null
+  ) {
+    throw new ProductPricingError(
+      "Cost price is required when opening stock is greater than zero.",
+    );
+  }
+
+  /*
+   * Make sure every current selling price
+   * is at least equal to the real cost of
+   * the quantity being sold.
+   */
+  assertSellingPricesNotBelowCost(
+    costPrice,
+    data.saleUnits,
+  );
+
   const duplicate =
     await findDuplicateProductByName(
       cleanedName,
@@ -225,7 +277,8 @@ export async function createProduct(
     data: {
       name: cleanedName,
 
-      ownerId: data.ownerId,
+      ownerId:
+        data.ownerId,
 
       categoryId:
         data.categoryId,
@@ -238,6 +291,9 @@ export async function createProduct(
 
       lowStock:
         data.lowStock,
+
+      currentCostPrice:
+        costPrice,
 
       active:
         data.active ?? true,
@@ -270,9 +326,7 @@ export async function createProduct(
                     priceRules: {
                       create:
                         saleUnit.priceRules.map(
-                          (
-                            rule,
-                          ) => ({
+                          (rule) => ({
                             quantity:
                               rule.quantity,
 
@@ -291,6 +345,9 @@ export async function createProduct(
           ),
       },
 
+      /*
+       * Opening stock movement.
+       */
       ...(data.stock > 0
         ? {
             stockMovements: {
@@ -302,6 +359,28 @@ export async function createProduct(
 
                 note:
                   "Initial stock",
+              },
+            },
+          }
+        : {}),
+
+      /*
+       * Record initial cost price in the
+       * same history system used by later
+       * cost-price changes.
+       */
+      ...(costPrice != null
+        ? {
+            costPriceHistories: {
+              create: {
+                newCostPrice:
+                  costPrice,
+
+                changeType:
+                  "MANUAL_UPDATE",
+
+                note:
+                  "Initial product cost price",
               },
             },
           }
@@ -360,7 +439,8 @@ export async function updateProduct(
           include: {
             saleUnits: {
               include: {
-                priceRules: true,
+                priceRules:
+                  true,
               },
             },
           },
@@ -373,10 +453,27 @@ export async function updateProduct(
       }
 
       /*
-       * Changing the base unit changes the meaning
-       * of the stock quantity.
+       * Validate CURRENT selling prices
+       * against CURRENT cost price.
        *
-       * We only allow it when current stock is zero.
+       * Cost itself is not edited here.
+       */
+      const currentCostPrice =
+        existingProduct.currentCostPrice !=
+        null
+          ? Number(
+              existingProduct.currentCostPrice,
+            )
+          : null;
+
+      assertSellingPricesNotBelowCost(
+        currentCostPrice,
+        data.saleUnits,
+      );
+
+      /*
+       * Changing the base unit changes what
+       * Product.stock means.
        */
       if (
         existingProduct.unitId !==
@@ -402,13 +499,16 @@ export async function updateProduct(
         new Set(
           data.saleUnits
             .map(
-              (unit) => unit.id,
+              (unit) =>
+                unit.id,
             )
             .filter(
               (
                 unitId,
               ): unitId is string =>
-                Boolean(unitId),
+                Boolean(
+                  unitId,
+                ),
             ),
         );
 
@@ -445,7 +545,8 @@ export async function updateProduct(
             data.lowStock,
 
           active:
-            data.active ?? true,
+            data.active ??
+            true,
         },
       });
 
@@ -462,10 +563,19 @@ export async function updateProduct(
             saleUnit.id,
           )
         ) {
-          /*
-           * Check whether this exact selling unit
-           * has already appeared in historical sales.
-           */
+          const oldSaleUnit =
+            existingSaleUnits.find(
+              (existing) =>
+                existing.id ===
+                saleUnit.id,
+            );
+
+          if (!oldSaleUnit) {
+            throw new Error(
+              "Selling unit not found",
+            );
+          }
+
           const usageCount =
             await tx.saleItem.count({
               where: {
@@ -474,6 +584,104 @@ export async function updateProduct(
               },
             });
 
+          const conversionChanged =
+            oldSaleUnit.unitId !==
+              saleUnit.unitId ||
+            oldSaleUnit.quantityInBaseUnit !==
+              saleUnit.quantityInBaseUnit;
+
+          /*
+           * IMPORTANT:
+           *
+           * If a selling unit was used in an
+           * old sale, never rewrite its old
+           * conversion.
+           *
+           * Deactivate the historical record
+           * and create a new current record.
+           */
+          if (
+            usageCount > 0 &&
+            conversionChanged
+          ) {
+            await tx.productSaleUnit.update(
+              {
+                where: {
+                  id:
+                    oldSaleUnit.id,
+                },
+
+                data: {
+                  active:
+                    false,
+
+                  isDefault:
+                    false,
+                },
+              },
+            );
+
+            await tx.productSaleUnit.create(
+              {
+                data: {
+                  productId:
+                    id,
+
+                  unitId:
+                    saleUnit.unitId,
+
+                  quantityInBaseUnit:
+                    saleUnit.quantityInBaseUnit,
+
+                  sellingPrice:
+                    saleUnit.sellingPrice,
+
+                  isDefault:
+                    saleUnit.isDefault ??
+                    false,
+
+                  active:
+                    saleUnit.active ??
+                    true,
+
+                  ...(saleUnit.priceRules &&
+                  saleUnit.priceRules
+                    .length > 0
+                    ? {
+                        priceRules: {
+                          create:
+                            saleUnit.priceRules.map(
+                              (
+                                rule,
+                              ) => ({
+                                quantity:
+                                  rule.quantity,
+
+                                price:
+                                  rule.price,
+
+                                active:
+                                  rule.active ??
+                                  true,
+                              }),
+                            ),
+                        },
+                      }
+                    : {}),
+                },
+              },
+            );
+
+            continue;
+          }
+
+          /*
+           * Historical unit identity/conversion
+           * stays untouched if it was used.
+           * Current selling price may change,
+           * because SaleItem already snapshots
+           * the old selling price.
+           */
           const updateData: {
             unitId?: string;
             quantityInBaseUnit?: number;
@@ -493,15 +701,6 @@ export async function updateProduct(
               true,
           };
 
-          /*
-           * Unit identity and conversion can only be
-           * rewritten when this selling unit has never
-           * been used in a historical sale.
-           *
-           * Selling price can still change because old
-           * SaleItems already store their historical
-           * unit price.
-           */
           if (usageCount === 0) {
             updateData.unitId =
               saleUnit.unitId;
@@ -523,9 +722,9 @@ export async function updateProduct(
           );
 
           /*
-           * Price rules represent the current selling
-           * configuration. Old sales already have their
-           * historical prices stored in SaleItem.
+           * Price rules are current commercial
+           * rules. Historical sales already store
+           * the actual amount sold.
            */
           await tx.productSaleUnitPriceRule.deleteMany(
             {
@@ -545,9 +744,7 @@ export async function updateProduct(
               {
                 data:
                   saleUnit.priceRules.map(
-                    (
-                      rule,
-                    ) => ({
+                    (rule) => ({
                       productSaleUnitId:
                         saleUnit.id!,
 
@@ -599,9 +796,7 @@ export async function updateProduct(
                       priceRules: {
                         create:
                           saleUnit.priceRules.map(
-                            (
-                              rule,
-                            ) => ({
+                            (rule) => ({
                               quantity:
                                 rule.quantity,
 
@@ -623,7 +818,7 @@ export async function updateProduct(
       }
 
       /*
-       * Handle selling units removed from the editor.
+       * Selling units removed from the editor.
        */
       for (
         const removedSaleUnit of
@@ -638,10 +833,6 @@ export async function updateProduct(
           });
 
         if (usageCount === 0) {
-          /*
-           * Safe to physically remove because no
-           * historical SaleItem references it.
-           */
           await tx.productSaleUnitPriceRule.deleteMany(
             {
               where: {
@@ -661,9 +852,8 @@ export async function updateProduct(
           );
         } else {
           /*
-           * Preserve selling units that were used in
-           * historical sales. They become inactive
-           * instead of being deleted.
+           * Keep anything referenced by an
+           * historical sale.
            */
           await tx.productSaleUnit.update(
             {
@@ -698,6 +888,7 @@ export async function updateProduct(
             saleUnits: {
               include: {
                 unit: true,
+
                 priceRules:
                   true,
               },
@@ -712,13 +903,6 @@ export async function updateProduct(
       );
     },
 
-    /*
-     * Neon is remote and this operation performs
-     * multiple reads/writes.
-     *
-     * Prisma's default interactive transaction
-     * timeout is only 5 seconds, which caused P2028.
-     */
     {
       maxWait: 10000,
       timeout: 30000,
@@ -733,7 +917,8 @@ export async function reduceProductStock(
   const product =
     await prisma.product.findUnique({
       where: {
-        id: productId,
+        id:
+          productId,
       },
     });
 
@@ -786,7 +971,8 @@ export async function restockProduct(
   const product =
     await prisma.product.findUnique({
       where: {
-        id: productId,
+        id:
+          productId,
       },
     });
 
@@ -848,7 +1034,8 @@ export async function getStockMovements() {
     },
 
     orderBy: {
-      createdAt: "desc",
+      createdAt:
+        "desc",
     },
   });
 }

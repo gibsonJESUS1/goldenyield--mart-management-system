@@ -2,108 +2,320 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/prisma";
 
+import {
+  getPricingWarnings,
+} from "@/lib/product-pricing";
+
 function toDecimal(value: number) {
   if (!Number.isFinite(value)) {
     return new Prisma.Decimal(0);
   }
 
-  return new Prisma.Decimal(value.toFixed(2));
+  return new Prisma.Decimal(
+    value.toFixed(2),
+  );
 }
 
-export async function POST(request: Request) {
+export async function POST(
+  request: Request,
+) {
   try {
-    const body = (await request.json()) as {
-      productId?: string;
-      costPrice?: number;
-      note?: string | null;
-    };
+    const body =
+      (await request.json()) as {
+        productId?: string;
+        costPrice?: number;
+        note?: string | null;
+      };
 
-    const productId = body.productId?.trim();
-    const parsedCostPrice = Number(body.costPrice ?? 0);
-    const note = body.note?.trim() || null;
+    const productId =
+      body.productId?.trim();
+
+    const parsedCostPrice =
+      Number(
+        body.costPrice ?? 0,
+      );
+
+    const note =
+      body.note?.trim() ||
+      null;
 
     if (!productId) {
       return NextResponse.json(
-        { message: "Product is required" },
-        { status: 400 },
+        {
+          message:
+            "Product is required",
+        },
+        {
+          status: 400,
+        },
       );
     }
 
-    if (!parsedCostPrice || parsedCostPrice <= 0) {
+    if (
+      !Number.isFinite(
+        parsedCostPrice,
+      ) ||
+      parsedCostPrice <= 0
+    ) {
       return NextResponse.json(
-        { message: "Cost price must be greater than zero" },
-        { status: 400 },
+        {
+          message:
+            "Cost price must be greater than zero",
+        },
+        {
+          status: 400,
+        },
       );
     }
 
-    const result = await prisma.$transaction(async (tx) => {
-      const existingProduct = await tx.product.findUnique({
-        where: { id: productId },
-        select: {
-          id: true,
-          name: true,
-          currentCostPrice: true,
+    const result =
+      await prisma.$transaction(
+        async (tx) => {
+          const existingProduct =
+            await tx.product.findUnique(
+              {
+                where: {
+                  id:
+                    productId,
+                },
+
+                select: {
+                  id: true,
+                  name: true,
+
+                  currentCostPrice:
+                    true,
+
+                  saleUnits: {
+                    where: {
+                      active:
+                        true,
+                    },
+
+                    select: {
+                      unitId:
+                        true,
+
+                      quantityInBaseUnit:
+                        true,
+
+                      sellingPrice:
+                        true,
+
+                      active:
+                        true,
+
+                      priceRules: {
+                        where: {
+                          active:
+                            true,
+                        },
+
+                        select: {
+                          quantity:
+                            true,
+
+                          price:
+                            true,
+
+                          active:
+                            true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            );
+
+          if (
+            !existingProduct
+          ) {
+            throw new Error(
+              "PRODUCT_NOT_FOUND",
+            );
+          }
+
+          const oldCostPrice =
+            existingProduct.currentCostPrice !=
+            null
+              ? Number(
+                  existingProduct.currentCostPrice,
+                )
+              : null;
+
+          /*
+           * IMPORTANT:
+           *
+           * Warnings do not stop the
+           * real cost from being saved.
+           */
+          const warnings =
+            getPricingWarnings(
+              parsedCostPrice,
+
+              existingProduct.saleUnits.map(
+                (
+                  saleUnit,
+                ) => ({
+                  unitId:
+                    saleUnit.unitId,
+
+                  quantityInBaseUnit:
+                    saleUnit.quantityInBaseUnit,
+
+                  sellingPrice:
+                    Number(
+                      saleUnit.sellingPrice,
+                    ),
+
+                  active:
+                    saleUnit.active,
+
+                  priceRules:
+                    saleUnit.priceRules.map(
+                      (
+                        rule,
+                      ) => ({
+                        quantity:
+                          rule.quantity,
+
+                        price:
+                          Number(
+                            rule.price,
+                          ),
+
+                        active:
+                          rule.active,
+                      }),
+                    ),
+                }),
+              ),
+            );
+
+          const updatedProduct =
+            await tx.product.update(
+              {
+                where: {
+                  id:
+                    productId,
+                },
+
+                data: {
+                  currentCostPrice:
+                    toDecimal(
+                      parsedCostPrice,
+                    ),
+                },
+
+                select: {
+                  id: true,
+                  name: true,
+
+                  currentCostPrice:
+                    true,
+                },
+              },
+            );
+
+          await tx.productCostPriceHistory.create(
+            {
+              data: {
+                productId:
+                  existingProduct.id,
+
+                oldCostPrice:
+                  oldCostPrice !=
+                  null
+                    ? toDecimal(
+                        oldCostPrice,
+                      )
+                    : undefined,
+
+                newCostPrice:
+                  toDecimal(
+                    parsedCostPrice,
+                  ),
+
+                changeType:
+                  "MANUAL_UPDATE",
+
+                note,
+
+                reference:
+                  existingProduct.id,
+              },
+            },
+          );
+
+          return {
+            product:
+              updatedProduct,
+
+            warnings,
+          };
         },
-      });
 
-      if (!existingProduct) {
-        throw new Error("PRODUCT_NOT_FOUND");
-      }
-
-      const oldCostPrice =
-        existingProduct.currentCostPrice != null
-          ? Number(existingProduct.currentCostPrice)
-          : null;
-
-      const updatedProduct = await tx.product.update({
-        where: { id: productId },
-        data: {
-          currentCostPrice: toDecimal(parsedCostPrice),
+        {
+          maxWait: 10000,
+          timeout: 30000,
         },
-        select: {
-          id: true,
-          name: true,
-          currentCostPrice: true,
-        },
-      });
-
-      await tx.productCostPriceHistory.create({
-        data: {
-          productId: existingProduct.id,
-          oldCostPrice:
-            oldCostPrice != null ? toDecimal(oldCostPrice) : undefined,
-          newCostPrice: toDecimal(parsedCostPrice),
-          changeType: "MANUAL_UPDATE",
-          note,
-          reference: existingProduct.id,
-        },
-      });
-
-      return updatedProduct;
-    });
+      );
 
     return NextResponse.json({
-      message: "Cost price updated successfully",
+      message:
+        "Cost price updated successfully",
+
       product: {
-        id: result.id,
-        name: result.name,
-        currentCostPrice: Number(result.currentCostPrice ?? 0),
+        id:
+          result.product.id,
+
+        name:
+          result.product.name,
+
+        currentCostPrice:
+          Number(
+            result.product
+              .currentCostPrice ??
+              0,
+          ),
       },
+
+      warnings:
+        result.warnings,
+
       note,
     });
   } catch (error) {
-    console.error("POST /api/products/update-cost error:", error);
+    console.error(
+      "POST /api/products/update-cost error:",
+      error,
+    );
 
-    if (error instanceof Error && error.message === "PRODUCT_NOT_FOUND") {
+    if (
+      error instanceof Error &&
+      error.message ===
+        "PRODUCT_NOT_FOUND"
+    ) {
       return NextResponse.json(
-        { message: "Product not found" },
-        { status: 404 },
+        {
+          message:
+            "Product not found",
+        },
+        {
+          status: 404,
+        },
       );
     }
 
     return NextResponse.json(
-      { message: "Failed to update cost price" },
-      { status: 500 },
+      {
+        message:
+          "Failed to update cost price",
+      },
+      {
+        status: 500,
+      },
     );
   }
 }

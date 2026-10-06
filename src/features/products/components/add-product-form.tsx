@@ -15,6 +15,10 @@ import {
   type ProductSaleUnitConfig,
 } from "@/lib/product-unit-config";
 
+import {
+  getPricingWarnings,
+} from "@/lib/product-pricing";
+
 type OwnerOption = {
   id: string;
   name: string;
@@ -43,6 +47,7 @@ type ProductPayload = {
   unitId: string;
   stock: number;
   lowStock: number;
+  currentCostPrice: number | null;
   active: boolean;
   saleUnits: ProductSaleUnitConfig[];
 };
@@ -55,12 +60,15 @@ function createInitialForm(): ProductPayload {
     unitId: "",
     stock: 0,
     lowStock: 0,
+    currentCostPrice: null,
     active: true,
     saleUnits: [],
   };
 }
 
-function normalizeProductName(name: string) {
+function normalizeProductName(
+  name: string,
+) {
   return name
     .normalize("NFKC")
     .trim()
@@ -68,19 +76,31 @@ function normalizeProductName(name: string) {
     .toLowerCase();
 }
 
+function formatMoney(
+  value: number,
+) {
+  return `₦${value.toLocaleString(
+    "en-NG",
+    {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    },
+  )}`;
+}
+
 export default function AddProductForm() {
   const router = useRouter();
 
-  const [owners, setOwners] = useState<
-    OwnerOption[]
-  >([]);
+  const [owners, setOwners] =
+    useState<OwnerOption[]>([]);
 
-  const [categories, setCategories] =
-    useState<CategoryOption[]>([]);
+  const [
+    categories,
+    setCategories,
+  ] = useState<CategoryOption[]>([]);
 
-  const [units, setUnits] = useState<
-    UnitOption[]
-  >([]);
+  const [units, setUnits] =
+    useState<UnitOption[]>([]);
 
   const [
     existingProducts,
@@ -103,8 +123,10 @@ export default function AddProductForm() {
     setLoadingOptions,
   ] = useState(false);
 
-  const [formError, setFormError] =
-    useState("");
+  const [
+    formError,
+    setFormError,
+  ] = useState("");
 
   function updateField<
     K extends keyof ProductPayload,
@@ -118,11 +140,40 @@ export default function AddProductForm() {
     }));
   }
 
+  const baseUnit =
+    useMemo(
+      () =>
+        units.find(
+          (unit) =>
+            unit.id ===
+            form.unitId,
+        ) ?? null,
+      [
+        units,
+        form.unitId,
+      ],
+    );
+
+  const baseSaleUnit =
+    useMemo(() => {
+      return (
+        form.saleUnits.find(
+          (saleUnit) =>
+            saleUnit.unitId ===
+            form.unitId,
+        ) ?? null
+      );
+    }, [
+      form.saleUnits,
+      form.unitId,
+    ]);
+
   function handleBaseUnitChange(
     newBaseUnitId: string,
   ) {
     if (
-      newBaseUnitId === form.unitId
+      newBaseUnitId ===
+      form.unitId
     ) {
       return;
     }
@@ -131,6 +182,7 @@ export default function AddProductForm() {
       setForm((prev) => ({
         ...prev,
         unitId: "",
+        currentCostPrice: null,
         saleUnits: [],
       }));
 
@@ -138,19 +190,22 @@ export default function AddProductForm() {
     }
 
     if (form.unitId) {
-      const hasConfiguredSellingUnits =
+      const hasConfiguredData =
         form.saleUnits.length > 1 ||
         form.saleUnits.some(
           (saleUnit) =>
             saleUnit.sellingPrice > 0 ||
-            (saleUnit.priceRules?.length ??
-              0) > 0,
-        );
+            (
+              saleUnit.priceRules ??
+              []
+            ).length > 0,
+        ) ||
+        form.currentCostPrice != null;
 
-      if (hasConfiguredSellingUnits) {
+      if (hasConfiguredData) {
         const confirmed =
           window.confirm(
-            "Changing the base stock unit will reset the selling-unit setup because all conversions depend on the base unit. Continue?",
+            "Changing the base stock unit will reset the selling-unit setup and cost price because both depend on the base unit. Continue?",
           );
 
         if (!confirmed) {
@@ -162,7 +217,11 @@ export default function AddProductForm() {
     setForm((prev) => ({
       ...prev,
 
-      unitId: newBaseUnitId,
+      unitId:
+        newBaseUnitId,
+
+      currentCostPrice:
+        null,
 
       saleUnits: [
         createBaseSaleUnit(
@@ -190,12 +249,210 @@ export default function AddProductForm() {
           (product) =>
             normalizeProductName(
               product.name,
-            ) === normalizedName,
+            ) ===
+            normalizedName,
         ) ?? null
       );
     }, [
       form.name,
       existingProducts,
+    ]);
+
+  const pricingWarnings =
+    useMemo(() => {
+      return getPricingWarnings(
+        form.currentCostPrice,
+        form.saleUnits,
+      );
+    }, [
+      form.currentCostPrice,
+      form.saleUnits,
+    ]);
+
+  const profitabilityRows =
+    useMemo(() => {
+      if (
+        form.currentCostPrice ==
+          null ||
+        form.currentCostPrice <=
+          0
+      ) {
+        return [];
+      }
+
+      const baseSellingPrice =
+        baseSaleUnit?.sellingPrice ??
+        0;
+
+      return form.saleUnits
+        .filter(
+          (saleUnit) =>
+            saleUnit.active !== false,
+        )
+        .map((saleUnit) => {
+          const unit =
+            units.find(
+              (item) =>
+                item.id ===
+                saleUnit.unitId,
+            );
+
+          const quantityInBaseUnit =
+            saleUnit.quantityInBaseUnit;
+
+          const totalCost =
+            form.currentCostPrice! *
+            quantityInBaseUnit;
+
+          const sellingPrice =
+            saleUnit.sellingPrice;
+
+          const profit =
+            sellingPrice -
+            totalCost;
+
+          const margin =
+            sellingPrice > 0
+              ? (profit /
+                  sellingPrice) *
+                100
+              : 0;
+
+          const effectivePricePerBaseUnit =
+            quantityInBaseUnit > 0
+              ? sellingPrice /
+                quantityInBaseUnit
+              : 0;
+
+          /*
+           * What the customer would pay
+           * if they bought the same number
+           * of base units individually.
+           */
+          const normalRetailValue =
+            baseSellingPrice > 0
+              ? baseSellingPrice *
+                quantityInBaseUnit
+              : 0;
+
+          const customerSavings =
+            normalRetailValue > 0
+              ? normalRetailValue -
+                sellingPrice
+              : 0;
+
+          const discountPercent =
+            normalRetailValue > 0 &&
+            customerSavings > 0
+              ? (customerSavings /
+                  normalRetailValue) *
+                100
+              : 0;
+
+          const priceRules =
+            (
+              saleUnit.priceRules ??
+              []
+            )
+              .filter(
+                (rule) =>
+                  rule.active !==
+                  false,
+              )
+              .map((rule) => {
+                const totalBaseUnits =
+                  quantityInBaseUnit *
+                  rule.quantity;
+
+                const cost =
+                  form.currentCostPrice! *
+                  totalBaseUnits;
+
+                const normalRetail =
+                  baseSellingPrice > 0
+                    ? baseSellingPrice *
+                      totalBaseUnits
+                    : 0;
+
+                const ruleProfit =
+                  rule.price -
+                  cost;
+
+                const savings =
+                  normalRetail > 0
+                    ? normalRetail -
+                      rule.price
+                    : 0;
+
+                const effectivePrice =
+                  totalBaseUnits > 0
+                    ? rule.price /
+                      totalBaseUnits
+                    : 0;
+
+                const margin =
+                  rule.price > 0
+                    ? (ruleProfit /
+                        rule.price) *
+                      100
+                    : 0;
+
+                return {
+                  quantity:
+                    rule.quantity,
+
+                  totalBaseUnits,
+
+                  price:
+                    rule.price,
+
+                  cost,
+
+                  profit:
+                    ruleProfit,
+
+                  savings,
+
+                  effectivePrice,
+
+                  margin,
+                };
+              });
+
+          return {
+            unitId:
+              saleUnit.unitId,
+
+            unitName:
+              unit?.name ??
+              "Selling Unit",
+
+            quantityInBaseUnit,
+
+            totalCost,
+
+            sellingPrice,
+
+            profit,
+
+            margin,
+
+            effectivePricePerBaseUnit,
+
+            normalRetailValue,
+
+            customerSavings,
+
+            discountPercent,
+
+            priceRules,
+          };
+        });
+    }, [
+      form.currentCostPrice,
+      form.saleUnits,
+      units,
+      baseSaleUnit,
     ]);
 
   const validationError =
@@ -223,10 +480,12 @@ export default function AddProductForm() {
       }
 
       if (
-        !Number.isInteger(form.stock) ||
+        !Number.isInteger(
+          form.stock,
+        ) ||
         form.stock < 0
       ) {
-        return "Base stock quantity must be 0 or more.";
+        return "Opening stock must be 0 or more.";
       }
 
       if (
@@ -236,6 +495,26 @@ export default function AddProductForm() {
         form.lowStock < 0
       ) {
         return "Low stock threshold must be 0 or more.";
+      }
+
+      if (
+        form.currentCostPrice !=
+          null &&
+        (!Number.isFinite(
+          form.currentCostPrice,
+        ) ||
+          form.currentCostPrice <=
+            0)
+      ) {
+        return "Cost price must be greater than zero.";
+      }
+
+      if (
+        form.stock > 0 &&
+        form.currentCostPrice ==
+          null
+      ) {
+        return "Cost price is required when opening stock is greater than zero.";
       }
 
       const unitError =
@@ -248,10 +527,19 @@ export default function AddProductForm() {
         return unitError;
       }
 
+      if (
+        pricingWarnings.length >
+        0
+      ) {
+        return pricingWarnings[0]
+          .message;
+      }
+
       return "";
     }, [
       form,
       duplicateProduct,
+      pricingWarnings,
     ]);
 
   useEffect(() => {
@@ -269,21 +557,37 @@ export default function AddProductForm() {
           unitsRes,
           productsRes,
         ] = await Promise.all([
-          fetch("/api/owners", {
-            cache: "no-store",
-          }),
+          fetch(
+            "/api/owners",
+            {
+              cache:
+                "no-store",
+            },
+          ),
 
-          fetch("/api/categories", {
-            cache: "no-store",
-          }),
+          fetch(
+            "/api/categories",
+            {
+              cache:
+                "no-store",
+            },
+          ),
 
-          fetch("/api/units", {
-            cache: "no-store",
-          }),
+          fetch(
+            "/api/units",
+            {
+              cache:
+                "no-store",
+            },
+          ),
 
-          fetch("/api/products", {
-            cache: "no-store",
-          }),
+          fetch(
+            "/api/products",
+            {
+              cache:
+                "no-store",
+            },
+          ),
         ]);
 
         if (
@@ -309,31 +613,46 @@ export default function AddProductForm() {
           productsRes.json(),
         ]);
 
-        setOwners(ownersData);
+        setOwners(
+          ownersData,
+        );
 
         setCategories(
           categoriesData,
         );
 
-        setUnits(unitsData);
+        setUnits(
+          unitsData,
+        );
 
         setExistingProducts(
           (
             productsData as ExistingProduct[]
-          ).map((product) => ({
-            id: product.id,
-            name: product.name,
-            active: product.active,
-          })),
+          ).map(
+            (product) => ({
+              id:
+                product.id,
+
+              name:
+                product.name,
+
+              active:
+                product.active,
+            }),
+          ),
         );
       } catch (error) {
-        console.error(error);
+        console.error(
+          error,
+        );
 
         alert(
           "Failed to load owners, categories, units, or existing products",
         );
       } finally {
-        setLoadingOptions(false);
+        setLoadingOptions(
+          false,
+        );
       }
     }
 
@@ -342,8 +661,12 @@ export default function AddProductForm() {
 
   function closeForm() {
     setOpen(false);
+
     setFormError("");
-    setForm(createInitialForm());
+
+    setForm(
+      createInitialForm(),
+    );
   }
 
   async function handleSubmit(
@@ -363,37 +686,46 @@ export default function AddProductForm() {
     setLoading(true);
 
     try {
-      const payload: ProductPayload = {
-        ...form,
-
-        name: form.name
-          .trim()
-          .replace(/\s+/g, " "),
-
-        saleUnits:
-          form.saleUnits,
-      };
-
-      const response = await fetch(
-        "/api/products",
+      const payload: ProductPayload =
         {
-          method: "POST",
+          ...form,
 
-          headers: {
-            "Content-Type":
-              "application/json",
+          name:
+            form.name
+              .trim()
+              .replace(
+                /\s+/g,
+                " ",
+              ),
+
+          saleUnits:
+            form.saleUnits,
+        };
+
+      const response =
+        await fetch(
+          "/api/products",
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body:
+              JSON.stringify(
+                payload,
+              ),
           },
-
-          body: JSON.stringify(
-            payload,
-          ),
-        },
-      );
+        );
 
       const data =
         await response
           .json()
-          .catch(() => null);
+          .catch(
+            () => null,
+          );
 
       if (!response.ok) {
         if (
@@ -420,13 +752,19 @@ export default function AddProductForm() {
         );
       }
 
-      setForm(createInitialForm());
+      setForm(
+        createInitialForm(),
+      );
+
       setFormError("");
+
       setOpen(false);
 
       router.refresh();
     } catch (error) {
-      console.error(error);
+      console.error(
+        error,
+      );
 
       setFormError(
         error instanceof Error
@@ -460,16 +798,20 @@ export default function AddProductForm() {
                 </h2>
 
                 <p className="mt-1 text-sm text-slate-500">
-                  Create a product using
-                  a clear base stock unit
-                  and selling-unit
-                  conversions.
+                  Set the base
+                  stock unit,
+                  actual cost and
+                  selling units
+                  correctly from
+                  the start.
                 </p>
               </div>
 
               <button
                 type="button"
-                onClick={closeForm}
+                onClick={
+                  closeForm
+                }
                 className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
               >
                 Close
@@ -478,9 +820,8 @@ export default function AddProductForm() {
 
             {loadingOptions ? (
               <div className="rounded-2xl border border-dashed border-slate-200 p-6 text-sm text-slate-500">
-                Loading owners,
-                categories, units and
-                existing products...
+                Loading product
+                options...
               </div>
             ) : (
               <form
@@ -505,7 +846,7 @@ export default function AddProductForm() {
                     <p className="mt-1">
                       {duplicateProduct.active
                         ? `"${duplicateProduct.name}" is already an active product.`
-                        : `"${duplicateProduct.name}" is archived. Do not create another copy. Restore the existing product instead.`}
+                        : `"${duplicateProduct.name}" is archived. Restore the existing product instead of creating another copy.`}
                     </p>
                   </div>
                 ) : null}
@@ -521,14 +862,6 @@ export default function AddProductForm() {
                     <h3 className="text-lg font-bold text-slate-900">
                       Product Details
                     </h3>
-
-                    <p className="mt-1 text-sm text-slate-500">
-                      Start with the
-                      product and the
-                      smallest unit you
-                      use to count its
-                      stock.
-                    </p>
                   </div>
 
                   <div className="grid gap-4 md:grid-cols-2">
@@ -542,7 +875,9 @@ export default function AddProductForm() {
                         value={
                           form.name
                         }
-                        onChange={(e) =>
+                        onChange={(
+                          e,
+                        ) =>
                           updateField(
                             "name",
                             e.target
@@ -559,7 +894,9 @@ export default function AddProductForm() {
                         value={
                           form.categoryId
                         }
-                        onChange={(e) =>
+                        onChange={(
+                          e,
+                        ) =>
                           updateField(
                             "categoryId",
                             e.target
@@ -599,7 +936,9 @@ export default function AddProductForm() {
                         value={
                           form.ownerId
                         }
-                        onChange={(e) =>
+                        onChange={(
+                          e,
+                        ) =>
                           updateField(
                             "ownerId",
                             e.target
@@ -613,7 +952,9 @@ export default function AddProductForm() {
                         </option>
 
                         {owners.map(
-                          (owner) => (
+                          (
+                            owner,
+                          ) => (
                             <option
                               key={
                                 owner.id
@@ -637,7 +978,9 @@ export default function AddProductForm() {
                         value={
                           form.unitId
                         }
-                        onChange={(e) =>
+                        onChange={(
+                          e,
+                        ) =>
                           handleBaseUnitChange(
                             e.target
                               .value,
@@ -650,7 +993,9 @@ export default function AddProductForm() {
                         </option>
 
                         {units.map(
-                          (unit) => (
+                          (
+                            unit,
+                          ) => (
                             <option
                               key={
                                 unit.id
@@ -668,14 +1013,9 @@ export default function AddProductForm() {
                       </select>
 
                       <p className="mt-2 text-xs leading-5 text-slate-500">
-                        Choose the
-                        smallest unit
-                        you normally
-                        count in
+                        Use the smallest
+                        unit you count in
                         inventory.
-                        Example:
-                        Piece, Sachet
-                        or Bottle.
                       </p>
                     </Field>
 
@@ -688,7 +1028,9 @@ export default function AddProductForm() {
                         value={
                           form.stock
                         }
-                        onChange={(e) =>
+                        onChange={(
+                          e,
+                        ) =>
                           updateField(
                             "stock",
                             Number(
@@ -701,10 +1043,9 @@ export default function AddProductForm() {
                       />
 
                       <p className="mt-2 text-xs text-slate-500">
-                        Enter this in
-                        the selected
-                        base stock
-                        unit.
+                        Quantity in{" "}
+                        {baseUnit?.name ??
+                          "the base unit"}.
                       </p>
                     </Field>
 
@@ -717,7 +1058,9 @@ export default function AddProductForm() {
                         value={
                           form.lowStock
                         }
-                        onChange={(e) =>
+                        onChange={(
+                          e,
+                        ) =>
                           updateField(
                             "lowStock",
                             Number(
@@ -729,6 +1072,55 @@ export default function AddProductForm() {
                         required
                       />
                     </Field>
+
+                    <Field
+                      label={`Cost Price per ${
+                        baseUnit?.name ??
+                        "Base Unit"
+                      }`}
+                    >
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
+                        value={
+                          form.currentCostPrice ??
+                          ""
+                        }
+                        onChange={(
+                          e,
+                        ) => {
+                          const value =
+                            e.target
+                              .value;
+
+                          updateField(
+                            "currentCostPrice",
+                            value ===
+                              ""
+                              ? null
+                              : Number(
+                                  value,
+                                ),
+                          );
+                        }}
+                        placeholder="Example: 40"
+                      />
+
+                      <p className="mt-2 text-xs leading-5 text-slate-500">
+                        Enter the real
+                        purchase cost of
+                        one{" "}
+                        {baseUnit?.name ??
+                          "base unit"}.
+                        If you buy a pack,
+                        divide the pack
+                        purchase price by
+                        the number of base
+                        units inside it.
+                      </p>
+                    </Field>
                   </div>
                 </section>
 
@@ -738,14 +1130,14 @@ export default function AddProductForm() {
                       Selling Units
                     </h3>
 
-                    <p className="mt-1 text-sm leading-6 text-slate-500">
-                      The base selling
-                      unit is created
-                      automatically.
-                      Add larger units
-                      by specifying how
-                      many base units
-                      they contain.
+                    <p className="mt-1 text-sm text-slate-500">
+                      Define how the
+                      product is sold.
+                      Pack and Carton
+                      prices can be
+                      cheaper per piece
+                      than individual
+                      retail.
                     </p>
                   </div>
 
@@ -753,7 +1145,9 @@ export default function AddProductForm() {
                     baseUnitId={
                       form.unitId
                     }
-                    units={units}
+                    units={
+                      units
+                    }
                     value={
                       form.saleUnits
                     }
@@ -768,10 +1162,420 @@ export default function AddProductForm() {
                   />
                 </section>
 
+                {form.currentCostPrice !=
+                  null &&
+                profitabilityRows.length >
+                  0 ? (
+                  <section className="rounded-2xl border border-slate-200 p-4">
+                    <div className="mb-4">
+                      <h3 className="text-lg font-bold text-slate-900">
+                        Profit & Bulk
+                        Price Check
+                      </h3>
+
+                      <p className="mt-1 text-sm leading-6 text-slate-500">
+                        A Pack or Carton
+                        may be cheaper
+                        than buying the
+                        same quantity
+                        individually.
+                        That is a normal
+                        bulk discount.
+                        We only flag it
+                        as a problem when
+                        the selling price
+                        falls below its
+                        actual cost.
+                      </p>
+                    </div>
+
+                    <div className="space-y-4">
+                      {profitabilityRows.map(
+                        (
+                          row,
+                          index,
+                        ) => {
+                          const profitable =
+                            row.profit >=
+                            0;
+
+                          const isBulk =
+                            row.quantityInBaseUnit >
+                            1;
+
+                          const hasBulkDiscount =
+                            isBulk &&
+                            row.customerSavings >
+                              0;
+
+                          return (
+                            <div
+                              key={`${row.unitId}-${index}`}
+                              className={`rounded-2xl border p-4 ${
+                                profitable
+                                  ? "border-emerald-200 bg-emerald-50"
+                                  : "border-red-200 bg-red-50"
+                              }`}
+                            >
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <p className="text-base font-bold text-slate-900">
+                                    {
+                                      row.unitName
+                                    }
+                                  </p>
+
+                                  <p className="mt-1 text-sm text-slate-600">
+                                    1{" "}
+                                    {
+                                      row.unitName
+                                    }{" "}
+                                    ={" "}
+                                    {
+                                      row.quantityInBaseUnit
+                                    }{" "}
+                                    {baseUnit?.name ??
+                                      "base units"}
+                                  </p>
+
+                                  {hasBulkDiscount ? (
+                                    <p className="mt-2 text-sm font-medium text-blue-700">
+                                      Customer
+                                      saves{" "}
+                                      {formatMoney(
+                                        row.customerSavings,
+                                      )}{" "}
+                                      compared
+                                      with
+                                      buying{" "}
+                                      {
+                                        row.quantityInBaseUnit
+                                      }{" "}
+                                      {baseUnit?.name ??
+                                        "base units"}{" "}
+                                      individually.
+                                    </p>
+                                  ) : null}
+                                </div>
+
+                                <div className="flex flex-wrap gap-2">
+                                  {hasBulkDiscount ? (
+                                    <span className="rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold text-blue-700">
+                                      Bulk
+                                      Discount{" "}
+                                      {row.discountPercent.toFixed(
+                                        1,
+                                      )}
+                                      %
+                                    </span>
+                                  ) : null}
+
+                                  <span
+                                    className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                      profitable
+                                        ? "bg-emerald-100 text-emerald-700"
+                                        : "bg-red-100 text-red-700"
+                                    }`}
+                                  >
+                                    {profitable
+                                      ? "Profitable"
+                                      : "Loss"}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+                                <Metric
+                                  label="Actual Cost"
+                                  value={formatMoney(
+                                    row.totalCost,
+                                  )}
+                                />
+
+                                <Metric
+                                  label="Selling Price"
+                                  value={formatMoney(
+                                    row.sellingPrice,
+                                  )}
+                                />
+
+                                <Metric
+                                  label={
+                                    profitable
+                                      ? "Profit"
+                                      : "Loss"
+                                  }
+                                  value={formatMoney(
+                                    Math.abs(
+                                      row.profit,
+                                    ),
+                                  )}
+                                />
+
+                                <Metric
+                                  label="Margin"
+                                  value={`${row.margin.toFixed(
+                                    1,
+                                  )}%`}
+                                />
+
+                                <Metric
+                                  label={`Effective Price / ${
+                                    baseUnit?.name ??
+                                    "Base Unit"
+                                  }`}
+                                  value={formatMoney(
+                                    row.effectivePricePerBaseUnit,
+                                  )}
+                                />
+
+                                <Metric
+                                  label="Individual Retail Value"
+                                  value={
+                                    row.normalRetailValue >
+                                    0
+                                      ? formatMoney(
+                                          row.normalRetailValue,
+                                        )
+                                      : "—"
+                                  }
+                                />
+                              </div>
+
+                              {isBulk &&
+                              row.normalRetailValue >
+                                0 ? (
+                                <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+                                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                                    <span className="text-slate-600">
+                                      Buying{" "}
+                                      {
+                                        row.quantityInBaseUnit
+                                      }{" "}
+                                      {baseUnit?.name ??
+                                        "base units"}{" "}
+                                      individually
+                                    </span>
+
+                                    <span className="font-semibold text-slate-900">
+                                      {formatMoney(
+                                        row.normalRetailValue,
+                                      )}
+                                    </span>
+                                  </div>
+
+                                  <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-sm">
+                                    <span className="text-slate-600">
+                                      Buying
+                                      as{" "}
+                                      {
+                                        row.unitName
+                                      }
+                                    </span>
+
+                                    <span className="font-semibold text-slate-900">
+                                      {formatMoney(
+                                        row.sellingPrice,
+                                      )}
+                                    </span>
+                                  </div>
+
+                                  {row.customerSavings >
+                                  0 ? (
+                                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 text-sm">
+                                      <span className="font-semibold text-blue-700">
+                                        Customer
+                                        saves
+                                      </span>
+
+                                      <span className="font-bold text-blue-700">
+                                        {formatMoney(
+                                          row.customerSavings,
+                                        )}
+                                      </span>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
+
+                              {row.priceRules
+                                .length >
+                              0 ? (
+                                <div className="mt-4">
+                                  <p className="mb-2 text-sm font-semibold text-slate-800">
+                                    Quantity
+                                    Deals
+                                  </p>
+
+                                  <div className="space-y-2">
+                                    {row.priceRules.map(
+                                      (
+                                        rule,
+                                        ruleIndex,
+                                      ) => {
+                                        const ruleProfitable =
+                                          rule.profit >=
+                                          0;
+
+                                        return (
+                                          <div
+                                            key={
+                                              ruleIndex
+                                            }
+                                            className={`rounded-xl border p-3 ${
+                                              ruleProfitable
+                                                ? "border-slate-200 bg-white"
+                                                : "border-red-200 bg-red-50"
+                                            }`}
+                                          >
+                                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                              <p className="text-sm font-semibold text-slate-800">
+                                                {
+                                                  rule.quantity
+                                                }{" "}
+                                                ×{" "}
+                                                {
+                                                  row.unitName
+                                                }{" "}
+                                                for{" "}
+                                                {formatMoney(
+                                                  rule.price,
+                                                )}
+                                              </p>
+
+                                              <span
+                                                className={`text-xs font-semibold ${
+                                                  ruleProfitable
+                                                    ? "text-emerald-700"
+                                                    : "text-red-700"
+                                                }`}
+                                              >
+                                                {ruleProfitable
+                                                  ? `Profit ${formatMoney(
+                                                      rule.profit,
+                                                    )}`
+                                                  : `Loss ${formatMoney(
+                                                      Math.abs(
+                                                        rule.profit,
+                                                      ),
+                                                    )}`}
+                                              </span>
+                                            </div>
+
+                                            <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+                                              <SmallMetric
+                                                label="Actual Cost"
+                                                value={formatMoney(
+                                                  rule.cost,
+                                                )}
+                                              />
+
+                                              <SmallMetric
+                                                label="Deal Price"
+                                                value={formatMoney(
+                                                  rule.price,
+                                                )}
+                                              />
+
+                                              <SmallMetric
+                                                label={`Effective / ${
+                                                  baseUnit?.name ??
+                                                  "Base Unit"
+                                                }`}
+                                                value={formatMoney(
+                                                  rule.effectivePrice,
+                                                )}
+                                              />
+
+                                              <SmallMetric
+                                                label="Margin"
+                                                value={`${rule.margin.toFixed(
+                                                  1,
+                                                )}%`}
+                                              />
+
+                                              <SmallMetric
+                                                label="Customer Saves"
+                                                value={
+                                                  rule.savings >
+                                                  0
+                                                    ? formatMoney(
+                                                        rule.savings,
+                                                      )
+                                                    : "—"
+                                                }
+                                              />
+                                            </div>
+                                          </div>
+                                        );
+                                      },
+                                    )}
+                                  </div>
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        },
+                      )}
+                    </div>
+                  </section>
+                ) : null}
+
+                {pricingWarnings.length >
+                0 ? (
+                  <section className="rounded-2xl border border-red-200 bg-red-50 p-4">
+                    <h3 className="font-bold text-red-800">
+                      Pricing problem
+                    </h3>
+
+                    <p className="mt-1 text-sm text-red-700">
+                      This is not about
+                      offering a bulk
+                      discount. One or
+                      more prices are
+                      actually below the
+                      cost of the goods.
+                    </p>
+
+                    <div className="mt-3 space-y-2 text-sm text-red-700">
+                      {pricingWarnings.map(
+                        (
+                          warning,
+                          index,
+                        ) => (
+                          <p
+                            key={
+                              index
+                            }
+                          >
+                            •{" "}
+                            {
+                              warning.message
+                            }
+                          </p>
+                        ),
+                      )}
+                    </div>
+                  </section>
+                ) : null}
+
+                {form.currentCostPrice ==
+                  null ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    Enter a cost
+                    price to activate
+                    automatic profit,
+                    margin and bulk
+                    discount checks.
+                  </div>
+                ) : null}
+
                 <div className="flex justify-end gap-3 pt-2">
                   <button
                     type="button"
-                    onClick={closeForm}
+                    onClick={
+                      closeForm
+                    }
                     className="rounded-xl border border-slate-300 px-4 py-2 font-medium text-slate-700 hover:bg-slate-50"
                   >
                     Cancel
@@ -818,5 +1622,45 @@ function Field({
 
       {children}
     </label>
+  );
+}
+
+function Metric({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-lg bg-white/70 p-3">
+      <p className="text-xs text-slate-500">
+        {label}
+      </p>
+
+      <p className="mt-1 font-semibold text-slate-900">
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function SmallMetric({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-lg bg-slate-50 px-3 py-2">
+      <p className="text-[11px] text-slate-500">
+        {label}
+      </p>
+
+      <p className="mt-1 text-sm font-semibold text-slate-800">
+        {value}
+      </p>
+    </div>
   );
 }
