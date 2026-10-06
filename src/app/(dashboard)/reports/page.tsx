@@ -1,294 +1,364 @@
-import SummaryCard from "@/components/shared/summary-card";
 import SectionCard from "@/components/shared/section-card";
-import { getDashboardData } from "@/lib/db/dashboard";
+import SummaryCard from "@/components/shared/summary-card";
 import ReportsRangeFilter from "@/features/reports/components/reports-range-filter";
+import { getProfitabilityReport } from "@/lib/db/reports";
 
 type ReportsPageProps = {
   searchParams?: Promise<{
     range?: string;
+    startDate?: string;
+    endDate?: string;
   }>;
 };
 
-type OwnerPerformance = {
-  ownerId: string;
-  ownerName: string;
-  sales: number;
-  profit: number;
-  products: number;
-};
+export const dynamic = "force-dynamic";
 
-type TopProductPerformance = {
-  name: string;
-  sold: number;
-  revenue: number;
-  cost: number;
-  profit: number;
-};
+function formatMoney(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) {
+    return "—";
+  }
 
-function toSafeNumber(value: unknown) {
-  const num = Number(value ?? 0);
-  return Number.isFinite(num) ? num : 0;
+  return `₦${value.toLocaleString(undefined, {
+    maximumFractionDigits: 2,
+  })}`;
 }
 
-function getDateRange(range: string | undefined) {
-  const now = new Date();
+function formatPercent(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) {
+    return "—";
+  }
 
-  if (range === "today") {
+  return `${value.toFixed(1)}%`;
+}
+
+function startOfDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date: Date, days: number) {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function parseDateInput(value?: string) {
+  if (!value) return null;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const date = new Date(year, month, day);
+
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return date;
+}
+
+function getDateRange(
+  range: string,
+  customStart?: string,
+  customEnd?: string,
+) {
+  const now = new Date();
+  const today = startOfDay(now);
+  const tomorrow = addDays(today, 1);
+
+  if (range === "7d") {
     return {
-      startDate: new Date(now.getFullYear(), now.getMonth(), now.getDate()),
-      endDate: new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1),
+      startDate: addDays(today, -6),
+      endDate: tomorrow,
     };
   }
 
-  if (range === "7d") {
-    const start = new Date();
-    start.setDate(now.getDate() - 7);
-    return { startDate: start, endDate: now };
-  }
-
   if (range === "30d") {
-    const start = new Date();
-    start.setDate(now.getDate() - 30);
-    return { startDate: start, endDate: now };
+    return {
+      startDate: addDays(today, -29),
+      endDate: tomorrow,
+    };
   }
 
   if (range === "month") {
     return {
       startDate: new Date(now.getFullYear(), now.getMonth(), 1),
-      endDate: now,
+      endDate: tomorrow,
     };
   }
 
-  return {};
+  if (range === "custom") {
+    const start = parseDateInput(customStart);
+    const end = parseDateInput(customEnd);
+
+    if (start && end && start.getTime() <= end.getTime()) {
+      return {
+        startDate: start,
+        endDate: addDays(end, 1),
+      };
+    }
+  }
+
+  return {
+    startDate: today,
+    endDate: tomorrow,
+  };
 }
 
-function rangeLabel(range: string | undefined) {
-  if (range === "today") return "Today";
+function rangeLabel(
+  range: string,
+  startDate?: string,
+  endDate?: string,
+) {
+  if (range === "custom" && startDate && endDate) {
+    return `${startDate} to ${endDate}`;
+  }
+
   if (range === "7d") return "Last 7 days";
   if (range === "30d") return "Last 30 days";
   if (range === "month") return "This month";
   return "Today";
 }
 
-export const dynamic = "force-dynamic";
+function MarginBadge({ margin }: { margin: number }) {
+  const className =
+    margin < 0
+      ? "bg-red-50 text-red-700"
+      : margin < 10
+        ? "bg-amber-50 text-amber-700"
+        : "bg-emerald-50 text-emerald-700";
 
-async function getReportsView(range: string | undefined) {
-  const filters = getDateRange(range);
-  const { owners, products, sales, debts } = await getDashboardData(filters);
-
-  const totalSales = sales.length;
-
-  let totalRevenue = 0;
-  let totalCost = 0;
-  let totalProfit = 0;
-
-  sales.forEach((sale) => {
-    sale.items.forEach((item) => {
-      totalRevenue += toSafeNumber(item.lineTotal);
-      totalCost += toSafeNumber(item.lineCostTotal);
-      totalProfit += toSafeNumber(item.lineProfit);
-    });
-  });
-
-  const totalOutstanding = debts.reduce(
-    (sum, debt) => sum + toSafeNumber(debt.balance),
-    0,
+  return (
+    <span
+      className={`inline-flex rounded-lg px-2 py-1 text-xs font-semibold ${className}`}
+    >
+      {formatPercent(margin)}
+    </span>
   );
-
-  const paidSales = sales.filter((sale) => toSafeNumber(sale.balance) <= 0).length;
-  const partialOrOwed = sales.filter(
-    (sale) => toSafeNumber(sale.balance) > 0,
-  ).length;
-
-  const ownerSummary: OwnerPerformance[] = owners
-    .map((owner) => {
-      const ownerProducts = products.filter((product) => product.ownerId === owner.id);
-
-      const ownerItems = sales
-        .flatMap((sale) => sale.items)
-        .filter((item) => item.product.ownerId === owner.id);
-
-      const ownerSales = ownerItems.reduce(
-        (sum, item) => sum + toSafeNumber(item.lineTotal),
-        0,
-      );
-
-      const ownerProfit = ownerItems.reduce(
-        (sum, item) => sum + toSafeNumber(item.lineProfit),
-        0,
-      );
-
-      return {
-        ownerId: owner.id,
-        ownerName: owner.name,
-        sales: ownerSales,
-        profit: ownerProfit,
-        products: ownerProducts.length,
-      };
-    })
-    .sort((a, b) => b.profit - a.profit);
-
-  const productMap = new Map<string, TopProductPerformance>();
-
-  sales.forEach((sale) => {
-    sale.items.forEach((item) => {
-      const existing = productMap.get(item.productId);
-
-      if (existing) {
-        existing.sold += item.quantity;
-        existing.revenue += toSafeNumber(item.lineTotal);
-        existing.cost += toSafeNumber(item.lineCostTotal);
-        existing.profit += toSafeNumber(item.lineProfit);
-      } else {
-        productMap.set(item.productId, {
-          name: item.product.name,
-          sold: item.quantity,
-          revenue: toSafeNumber(item.lineTotal),
-          cost: toSafeNumber(item.lineCostTotal),
-          profit: toSafeNumber(item.lineProfit),
-        });
-      }
-    });
-  });
-
-  const topProducts = Array.from(productMap.values())
-    .sort((a, b) => b.profit - a.profit)
-    .slice(0, 5);
-
-  const lowStockSummary = products
-    .filter((product) => product.stock <= product.lowStock)
-    .sort((a, b) => a.stock - b.stock)
-    .slice(0, 5)
-    .map((product) => ({
-      id: product.id,
-      name: product.name,
-      stock: product.stock,
-      lowStock: product.lowStock,
-    }));
-
-  const profitMargin =
-    totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
-
-  return {
-    totalSales,
-    totalRevenue,
-    totalCost,
-    totalProfit,
-    profitMargin,
-    totalOutstanding,
-    paidSales,
-    partialOrOwed,
-    ownerSummary,
-    topProducts,
-    lowStockSummary,
-  };
 }
 
-export default async function ReportsPage({ searchParams }: ReportsPageProps) {
-  const resolvedSearchParams = await searchParams;
-  const range = resolvedSearchParams?.range ?? "today";
-  const data = await getReportsView(range);
+export default async function ReportsPage({
+  searchParams,
+}: ReportsPageProps) {
+  const params = await searchParams;
+
+  const requestedRange =
+    params?.range === "7d" ||
+    params?.range === "30d" ||
+    params?.range === "month" ||
+    params?.range === "custom"
+      ? params.range
+      : "today";
+
+  const filters = getDateRange(
+    requestedRange,
+    params?.startDate,
+    params?.endDate,
+  );
+
+  const data = await getProfitabilityReport(filters);
+
+  const inventoryValuationIncomplete =
+    data.inventory.missingCostProducts.length > 0 ||
+    data.inventory.missingRetailProducts.length > 0;
+
+  const actualProfitIncomplete = data.sales.missingCostLines > 0;
 
   return (
     <div className="space-y-5 sm:space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">
-            Reports
+            Stock Valuation & Profit Reports
           </h1>
-          <p className="mt-1 text-sm leading-6 text-slate-500 sm:text-base">
-            Review live sales, debt exposure, stock pressure, owner performance, and profit.
+
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-500 sm:text-base">
+            Current inventory value uses today&apos;s product cost price.
+            Historical profit uses the cost snapshot stored when each sale was made.
           </p>
         </div>
 
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-          <div className="w-full sm:w-auto">
-            <ReportsRangeFilter value={range} />
-          </div>
-          <span className="text-sm text-slate-500 sm:text-right">
-            {rangeLabel(range)}
-          </span>
+        <div className="flex flex-col gap-2">
+          <ReportsRangeFilter
+            value={requestedRange}
+            startDate={params?.startDate}
+            endDate={params?.endDate}
+          />
+
+          <p className="text-xs text-slate-500 xl:text-right">
+            Sales period:{" "}
+            <span className="font-semibold text-slate-700">
+              {rangeLabel(
+                requestedRange,
+                params?.startDate,
+                params?.endDate,
+              )}
+            </span>
+          </p>
         </div>
       </div>
 
+      <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
+        <span className="font-semibold text-slate-800">Important:</span>{" "}
+        stock valuation is a current snapshot and does not change with the date filter.
+        Revenue, cost of goods sold, gross profit, margins, and performance tables do.
+      </div>
+
+      <section>
+        <div className="mb-3">
+          <h2 className="text-lg font-bold text-slate-900">
+            Current Inventory Valuation
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Active products only. Retail value uses the normal selling price of one base unit.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            title="Stock Value at Cost"
+            value={formatMoney(data.inventory.inventoryCostValue)}
+            note="What current stock cost the business"
+          />
+
+          <SummaryCard
+            title="Current Retail Value"
+            value={formatMoney(data.inventory.inventoryRetailValue)}
+            note="At normal base-unit selling prices"
+          />
+
+          <SummaryCard
+            title="Potential Gross Profit"
+            value={formatMoney(data.inventory.inventoryPotentialProfit)}
+            note="Retail value minus known stock cost"
+          />
+
+          <SummaryCard
+            title="Missing Cost Prices"
+            value={data.inventory.missingCostProducts.length}
+            note="In-stock products needing cost price"
+          />
+        </div>
+      </section>
+
+      {inventoryValuationIncomplete ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+          Inventory valuation is incomplete. {" "}
+          {data.inventory.missingCostProducts.length > 0
+            ? `${data.inventory.missingCostProducts.length} in-stock product(s) have no valid cost price. `
+            : ""}
+          {data.inventory.missingRetailProducts.length > 0
+            ? `${data.inventory.missingRetailProducts.length} in-stock product(s) have no active base-unit selling price.`
+            : ""}
+        </div>
+      ) : null}
+
+      <section>
+        <div className="mb-3">
+          <h2 className="text-lg font-bold text-slate-900">
+            Actual Sales Profitability
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Calculated from sales recorded during the selected period.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryCard
+            title="Revenue"
+            value={formatMoney(data.sales.totalRevenue)}
+            note={`${data.sales.transactions} sale transaction(s)`}
+          />
+
+          <SummaryCard
+            title="Cost of Goods Sold"
+            value={formatMoney(data.sales.totalCost)}
+            note="Historical cost snapshots"
+          />
+
+          <SummaryCard
+            title="Gross Profit"
+            value={formatMoney(data.sales.totalProfit)}
+            note="Revenue with known cost minus COGS"
+          />
+
+          <SummaryCard
+            title="Gross Margin"
+            value={formatPercent(data.sales.grossMargin)}
+            note="Based only on sales with known cost"
+          />
+        </div>
+      </section>
+
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard
-          title="Total Sales Records"
-          value={data.totalSales}
-          note="Live from database"
+          title="Cost Coverage"
+          value={formatPercent(data.sales.costCoverage)}
+          note="Revenue backed by a cost snapshot"
         />
+
         <SummaryCard
-          title="Total Revenue"
-          value={`₦${data.totalRevenue.toLocaleString()}`}
-          note="Gross recorded sales"
+          title="Collected"
+          value={formatMoney(data.sales.totalCollectedFromSelectedSales)}
+          note="Amount paid on selected sales"
         />
+
         <SummaryCard
-          title="Total Cost"
-          value={`₦${data.totalCost.toLocaleString()}`}
-          note="Cost of goods sold"
+          title="Outstanding"
+          value={formatMoney(data.sales.outstandingFromSelectedSales)}
+          note="Balance on selected sales"
         />
+
         <SummaryCard
-          title="Total Profit"
-          value={`₦${data.totalProfit.toLocaleString()}`}
-          note="Gross profit"
-        />
-        <SummaryCard
-          title="Profit Margin"
-          value={`${data.profitMargin.toFixed(1)}%`}
-          note="Profit efficiency"
-        />
-        <SummaryCard
-          title="Outstanding Balance"
-          value={`₦${data.totalOutstanding.toLocaleString()}`}
-          note="Unpaid customer balances"
-        />
-        <SummaryCard
-          title="Paid Sales"
-          value={data.paidSales}
-          note="Fully settled transactions"
-        />
-        <SummaryCard
-          title="Partial / Owed"
-          value={data.partialOrOwed}
-          note="Needs payment follow-up"
+          title="Quantity Deal Savings"
+          value={formatMoney(data.sales.quantityDealSavings)}
+          note={`${data.sales.quantityDealLines} discounted sale line(s)`}
         />
       </section>
 
+      {actualProfitIncomplete ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+          Some older sale lines do not have a usable cost snapshot.
+          Profit excludes those lines instead of treating their cost as zero.
+          Missing-cost lines:{" "}
+          <span className="font-semibold">{data.sales.missingCostLines}</span>.
+          Revenue affected:{" "}
+          <span className="font-semibold">
+            {formatMoney(data.sales.missingCostRevenue)}
+          </span>
+          .
+        </div>
+      ) : null}
+
       <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <SectionCard
-          title="Owner Performance"
-          description="Live revenue and profit performance by owner."
+          title="Highest Margin Products"
+          description="Only products with complete cost data for the selected period."
         >
           <div className="space-y-3">
-            {data.ownerSummary.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-sm text-slate-500 sm:p-6">
-                No owner data yet.
-              </div>
+            {data.highestMarginProducts.length === 0 ? (
+              <EmptyState text="No complete product margin data for this period." />
             ) : (
-              data.ownerSummary.map((item) => (
+              data.highestMarginProducts.map((item) => (
                 <div
-                  key={item.ownerId}
-                  className="rounded-2xl bg-slate-50 p-4"
+                  key={item.id}
+                  className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="break-words font-semibold text-slate-900">
-                        {item.ownerName}
-                      </p>
-                      <p className="mt-1 text-sm text-slate-500">
-                        {item.products} tracked products
-                      </p>
-                    </div>
-
-                    <div className="shrink-0 sm:text-right">
-                      <p className="font-semibold text-slate-900">
-                        Revenue: ₦{item.sales.toLocaleString()}
-                      </p>
-                      <p className="text-sm font-medium text-emerald-700">
-                        Profit: ₦{item.profit.toLocaleString()}
-                      </p>
-                    </div>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-slate-900">{item.name}</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Profit {formatMoney(item.profit)} • Revenue{" "}
+                      {formatMoney(item.revenue)}
+                    </p>
                   </div>
+
+                  <MarginBadge margin={item.margin} />
                 </div>
               ))
             )}
@@ -296,42 +366,27 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
         </SectionCard>
 
         <SectionCard
-          title="Top Products by Profit"
-          description="Best-performing products by recorded profit."
+          title="Lowest Margin Products"
+          description="Products whose selling performance deserves the closest pricing review."
         >
           <div className="space-y-3">
-            {data.topProducts.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-sm text-slate-500 sm:p-6">
-                No product sales yet.
-              </div>
+            {data.lowestMarginProducts.length === 0 ? (
+              <EmptyState text="No complete product margin data for this period." />
             ) : (
-              data.topProducts.map((item) => (
+              data.lowestMarginProducts.map((item) => (
                 <div
-                  key={item.name}
-                  className="rounded-2xl bg-slate-50 p-4"
+                  key={item.id}
+                  className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <p className="break-words font-semibold text-slate-900">
-                        {item.name}
-                      </p>
-                      <p className="mt-1 text-sm text-slate-500">
-                        {item.sold} unit(s) sold
-                      </p>
-                    </div>
-
-                    <div className="shrink-0 sm:text-right">
-                      <p className="font-semibold text-slate-900">
-                        Revenue: ₦{item.revenue.toLocaleString()}
-                      </p>
-                      <p className="text-sm text-slate-500">
-                        Cost: ₦{item.cost.toLocaleString()}
-                      </p>
-                      <p className="text-sm font-medium text-emerald-700">
-                        Profit: ₦{item.profit.toLocaleString()}
-                      </p>
-                    </div>
+                  <div className="min-w-0">
+                    <p className="font-semibold text-slate-900">{item.name}</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      Profit {formatMoney(item.profit)} • Revenue{" "}
+                      {formatMoney(item.revenue)}
+                    </p>
                   </div>
+
+                  <MarginBadge margin={item.margin} />
                 </div>
               ))
             )}
@@ -340,41 +395,276 @@ export default async function ReportsPage({ searchParams }: ReportsPageProps) {
       </section>
 
       <SectionCard
-        title="Low Stock Report"
-        description="Products that need attention soon or immediately."
+        title="Product Profitability"
+        description="Revenue, historical cost, profit, and margin by product."
       >
-        <div className="space-y-3">
-          {data.lowStockSummary.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-sm text-slate-500 sm:p-6">
-              No low stock items right now.
-            </div>
-          ) : (
-            data.lowStockSummary.map((item) => (
+        {data.productPerformance.length === 0 ? (
+          <EmptyState text="No product sales for this period." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[980px] text-sm">
+              <thead className="border-b border-slate-200 text-left text-slate-500">
+                <tr>
+                  <th className="px-3 py-3 font-medium">Product</th>
+                  <th className="px-3 py-3 text-right font-medium">
+                    Base Units Sold
+                  </th>
+                  <th className="px-3 py-3 text-right font-medium">Revenue</th>
+                  <th className="px-3 py-3 text-right font-medium">COGS</th>
+                  <th className="px-3 py-3 text-right font-medium">Profit</th>
+                  <th className="px-3 py-3 text-right font-medium">Margin</th>
+                  <th className="px-3 py-3 text-right font-medium">Cost Gaps</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {data.productPerformance.map((item) => (
+                  <tr
+                    key={item.id}
+                    className="border-b border-slate-100 last:border-0"
+                  >
+                    <td className="px-3 py-3">
+                      <p className="font-semibold text-slate-900">{item.name}</p>
+                    </td>
+
+                    <td className="px-3 py-3 text-right text-slate-700">
+                      {item.baseUnitsSold.toLocaleString()} {item.baseUnitName}
+                    </td>
+
+                    <td className="px-3 py-3 text-right text-slate-700">
+                      {formatMoney(item.revenue)}
+                    </td>
+
+                    <td className="px-3 py-3 text-right text-slate-700">
+                      {formatMoney(item.cost)}
+                    </td>
+
+                    <td
+                      className={`px-3 py-3 text-right font-semibold ${
+                        item.profit < 0 ? "text-red-600" : "text-emerald-700"
+                      }`}
+                    >
+                      {formatMoney(item.profit)}
+                    </td>
+
+                    <td className="px-3 py-3 text-right">
+                      {item.missingCostLines === 0 ? (
+                        <MarginBadge margin={item.margin} />
+                      ) : (
+                        <span className="text-xs font-medium text-amber-700">
+                          Partial
+                        </span>
+                      )}
+                    </td>
+
+                    <td className="px-3 py-3 text-right">
+                      {item.missingCostLines > 0 ? (
+                        <span className="font-semibold text-amber-700">
+                          {item.missingCostLines}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SectionCard>
+
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <PerformanceTable
+          title="Category Profitability"
+          description="How each product category contributes to revenue and gross profit."
+          rows={data.categoryPerformance}
+          countLabel="Active Products"
+        />
+
+        <PerformanceTable
+          title="Owner Profitability"
+          description="Revenue and gross-profit contribution by product owner."
+          rows={data.ownerPerformance}
+          countLabel="Active Products"
+        />
+      </section>
+
+      <SectionCard
+        title="Highest-Value Inventory"
+        description="Current in-stock products ranked by known acquisition cost value."
+      >
+        {data.inventory.highestValueInventory.length === 0 ? (
+          <EmptyState text="No active stock available." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[980px] text-sm">
+              <thead className="border-b border-slate-200 text-left text-slate-500">
+                <tr>
+                  <th className="px-3 py-3 font-medium">Product</th>
+                  <th className="px-3 py-3 font-medium">Category</th>
+                  <th className="px-3 py-3 font-medium">Owner</th>
+                  <th className="px-3 py-3 text-right font-medium">Stock</th>
+                  <th className="px-3 py-3 text-right font-medium">Cost / Base</th>
+                  <th className="px-3 py-3 text-right font-medium">Stock Cost</th>
+                  <th className="px-3 py-3 text-right font-medium">Retail Value</th>
+                  <th className="px-3 py-3 text-right font-medium">
+                    Potential Profit
+                  </th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {data.inventory.highestValueInventory.map((item) => (
+                  <tr
+                    key={item.id}
+                    className="border-b border-slate-100 last:border-0"
+                  >
+                    <td className="px-3 py-3 font-semibold text-slate-900">
+                      {item.name}
+                    </td>
+                    <td className="px-3 py-3 text-slate-600">{item.category}</td>
+                    <td className="px-3 py-3 text-slate-600">{item.ownerName}</td>
+                    <td className="px-3 py-3 text-right text-slate-700">
+                      {item.stock.toLocaleString()} {item.baseUnitName}
+                    </td>
+                    <td className="px-3 py-3 text-right text-slate-700">
+                      {formatMoney(item.costPrice)}
+                    </td>
+                    <td className="px-3 py-3 text-right font-semibold text-slate-900">
+                      {formatMoney(item.stockCostValue)}
+                    </td>
+                    <td className="px-3 py-3 text-right text-slate-700">
+                      {formatMoney(item.stockRetailValue)}
+                    </td>
+                    <td
+                      className={`px-3 py-3 text-right font-semibold ${
+                        (item.potentialGrossProfit ?? 0) < 0
+                          ? "text-red-600"
+                          : "text-emerald-700"
+                      }`}
+                    >
+                      {formatMoney(item.potentialGrossProfit)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </SectionCard>
+
+      {data.inventory.missingCostProducts.length > 0 ? (
+        <SectionCard
+          title="Products Missing Cost Price"
+          description="These items prevent complete stock valuation and should be corrected."
+        >
+          <div className="grid gap-3 md:grid-cols-2">
+            {data.inventory.missingCostProducts.map((item) => (
               <div
                 key={item.id}
-                className="flex flex-col gap-3 rounded-2xl bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+                className="rounded-2xl border border-amber-200 bg-amber-50 p-4"
               >
-                <div className="min-w-0">
-                  <p className="break-words font-semibold text-slate-900">
-                    {item.name}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-500">
-                    Threshold: {item.lowStock}
-                  </p>
-                </div>
-
-                <p
-                  className={`shrink-0 font-semibold sm:text-right ${
-                    item.stock === 0 ? "text-red-600" : "text-amber-600"
-                  }`}
-                >
-                  {item.stock === 0 ? "Out of stock" : `${item.stock} left`}
+                <p className="font-semibold text-slate-900">{item.name}</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  {item.stock.toLocaleString()} {item.baseUnitName} in stock •{" "}
+                  {item.category}
                 </p>
               </div>
-            ))
-          )}
-        </div>
-      </SectionCard>
+            ))}
+          </div>
+        </SectionCard>
+      ) : null}
     </div>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-slate-200 p-5 text-sm text-slate-500 sm:p-6">
+      {text}
+    </div>
+  );
+}
+
+type PerformanceTableRow = {
+  id: string;
+  name: string;
+  revenue: number;
+  cost: number;
+  profit: number;
+  margin: number;
+  missingCostLines: number;
+  activeProducts: number;
+};
+
+function PerformanceTable({
+  title,
+  description,
+  rows,
+  countLabel,
+}: {
+  title: string;
+  description: string;
+  rows: PerformanceTableRow[];
+  countLabel: string;
+}) {
+  return (
+    <SectionCard title={title} description={description}>
+      {rows.length === 0 ? (
+        <EmptyState text="No sales data for this period." />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] text-sm">
+            <thead className="border-b border-slate-200 text-left text-slate-500">
+              <tr>
+                <th className="px-3 py-3 font-medium">Name</th>
+                <th className="px-3 py-3 text-right font-medium">
+                  {countLabel}
+                </th>
+                <th className="px-3 py-3 text-right font-medium">Revenue</th>
+                <th className="px-3 py-3 text-right font-medium">Profit</th>
+                <th className="px-3 py-3 text-right font-medium">Margin</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {rows.map((item) => (
+                <tr
+                  key={item.id}
+                  className="border-b border-slate-100 last:border-0"
+                >
+                  <td className="px-3 py-3 font-semibold text-slate-900">
+                    {item.name}
+                  </td>
+                  <td className="px-3 py-3 text-right text-slate-700">
+                    {item.activeProducts}
+                  </td>
+                  <td className="px-3 py-3 text-right text-slate-700">
+                    {formatMoney(item.revenue)}
+                  </td>
+                  <td
+                    className={`px-3 py-3 text-right font-semibold ${
+                      item.profit < 0 ? "text-red-600" : "text-emerald-700"
+                    }`}
+                  >
+                    {formatMoney(item.profit)}
+                  </td>
+                  <td className="px-3 py-3 text-right">
+                    {item.missingCostLines === 0 ? (
+                      <MarginBadge margin={item.margin} />
+                    ) : (
+                      <span className="text-xs font-medium text-amber-700">
+                        Partial
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </SectionCard>
   );
 }
