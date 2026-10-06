@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { prisma } from "@/lib/prisma";
+
 import {
-  deleteProduct,
   DuplicateProductError,
   getProductById,
   updateProduct,
@@ -10,6 +11,10 @@ import {
 import {
   ProductUnitConfigurationError,
 } from "@/lib/product-unit-config";
+
+import {
+  ProductPricingError,
+} from "@/lib/product-pricing";
 
 export async function GET(
   _request: Request,
@@ -24,7 +29,8 @@ export async function GET(
   try {
     const { id } = await params;
 
-    const product = await getProductById(id);
+    const product =
+      await getProductById(id);
 
     if (!product) {
       return NextResponse.json(
@@ -58,33 +64,52 @@ export async function GET(
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
 
-      saleUnits: product.saleUnits.map(
-        (saleUnit) => ({
-          id: saleUnit.id,
+      saleUnits:
+        product.saleUnits.map(
+          (saleUnit) => ({
+            id:
+              saleUnit.id,
 
-          unitId: saleUnit.unitId,
-          unitName: saleUnit.unit.name,
+            unitId:
+              saleUnit.unitId,
 
-          quantityInBaseUnit:
-            saleUnit.quantityInBaseUnit,
+            unitName:
+              saleUnit.unit.name,
 
-          sellingPrice: Number(
-            saleUnit.sellingPrice,
-          ),
+            quantityInBaseUnit:
+              saleUnit.quantityInBaseUnit,
 
-          isDefault: saleUnit.isDefault,
-          active: saleUnit.active,
+            sellingPrice:
+              Number(
+                saleUnit.sellingPrice,
+              ),
 
-          priceRules: saleUnit.priceRules.map(
-            (rule) => ({
-              id: rule.id,
-              quantity: rule.quantity,
-              price: Number(rule.price),
-              active: rule.active,
-            }),
-          ),
-        }),
-      ),
+            isDefault:
+              saleUnit.isDefault,
+
+            active:
+              saleUnit.active,
+
+            priceRules:
+              saleUnit.priceRules.map(
+                (rule) => ({
+                  id:
+                    rule.id,
+
+                  quantity:
+                    rule.quantity,
+
+                  price:
+                    Number(
+                      rule.price,
+                    ),
+
+                  active:
+                    rule.active,
+                }),
+              ),
+          }),
+        ),
     });
   } catch (error) {
     console.error(
@@ -94,7 +119,8 @@ export async function GET(
 
     return NextResponse.json(
       {
-        error: "Failed to fetch product",
+        error:
+          "Failed to fetch product",
       },
       {
         status: 500,
@@ -154,14 +180,20 @@ export async function PATCH(
       !body.ownerId ||
       !body.categoryId ||
       !body.unitId ||
-      typeof body.stock !== "number" ||
-      typeof body.lowStock !== "number" ||
-      !Array.isArray(body.saleUnits) ||
-      body.saleUnits.length === 0
+      typeof body.stock !==
+        "number" ||
+      typeof body.lowStock !==
+        "number" ||
+      !Array.isArray(
+        body.saleUnits,
+      ) ||
+      body.saleUnits.length ===
+        0
     ) {
       return NextResponse.json(
         {
-          error: "Invalid product payload",
+          error:
+            "Invalid product payload",
         },
         {
           status: 400,
@@ -169,59 +201,98 @@ export async function PATCH(
       );
     }
 
-    const product = await updateProduct(
-      id,
-      body,
-    );
+    const product =
+      await updateProduct(
+        id,
+        body,
+      );
 
     return NextResponse.json({
-      id: product.id,
-      name: product.name,
+      id:
+        product.id,
 
-      ownerId: product.ownerId,
-      ownerName: product.owner.name,
+      name:
+        product.name,
 
-      categoryId: product.categoryId,
-      category: product.category.name,
+      ownerId:
+        product.ownerId,
 
-      unitId: product.unitId,
-      unit: product.unit.name,
+      ownerName:
+        product.owner.name,
 
-      stock: product.stock,
-      lowStock: product.lowStock,
+      categoryId:
+        product.categoryId,
 
-      active: product.active,
+      category:
+        product.category.name,
 
-      createdAt: product.createdAt,
-      updatedAt: product.updatedAt,
+      unitId:
+        product.unitId,
 
-      saleUnits: product.saleUnits.map(
-        (saleUnit) => ({
-          id: saleUnit.id,
+      unit:
+        product.unit.name,
 
-          unitId: saleUnit.unitId,
-          unitName: saleUnit.unit.name,
+      stock:
+        product.stock,
 
-          quantityInBaseUnit:
-            saleUnit.quantityInBaseUnit,
+      lowStock:
+        product.lowStock,
 
-          sellingPrice: Number(
-            saleUnit.sellingPrice,
-          ),
+      active:
+        product.active,
 
-          isDefault: saleUnit.isDefault,
-          active: saleUnit.active,
+      createdAt:
+        product.createdAt,
 
-          priceRules: saleUnit.priceRules.map(
-            (rule) => ({
-              id: rule.id,
-              quantity: rule.quantity,
-              price: Number(rule.price),
-              active: rule.active,
-            }),
-          ),
-        }),
-      ),
+      updatedAt:
+        product.updatedAt,
+
+      saleUnits:
+        product.saleUnits.map(
+          (saleUnit) => ({
+            id:
+              saleUnit.id,
+
+            unitId:
+              saleUnit.unitId,
+
+            unitName:
+              saleUnit.unit.name,
+
+            quantityInBaseUnit:
+              saleUnit.quantityInBaseUnit,
+
+            sellingPrice:
+              Number(
+                saleUnit.sellingPrice,
+              ),
+
+            isDefault:
+              saleUnit.isDefault,
+
+            active:
+              saleUnit.active,
+
+            priceRules:
+              saleUnit.priceRules.map(
+                (rule) => ({
+                  id:
+                    rule.id,
+
+                  quantity:
+                    rule.quantity,
+
+                  price:
+                    Number(
+                      rule.price,
+                    ),
+
+                  active:
+                    rule.active,
+                }),
+              ),
+          }),
+        ),
     });
   } catch (error) {
     console.error(
@@ -229,22 +300,32 @@ export async function PATCH(
       error,
     );
 
-    // Duplicate product protection
+    /*
+     * Duplicate product protection.
+     */
     if (
-      error instanceof DuplicateProductError
+      error instanceof
+      DuplicateProductError
     ) {
       return NextResponse.json(
         {
-          error: error.message,
+          error:
+            error.message,
 
-          code: error.product.active
-            ? "DUPLICATE_ACTIVE_PRODUCT"
-            : "DUPLICATE_ARCHIVED_PRODUCT",
+          code:
+            error.product.active
+              ? "DUPLICATE_ACTIVE_PRODUCT"
+              : "DUPLICATE_ARCHIVED_PRODUCT",
 
           existingProduct: {
-            id: error.product.id,
-            name: error.product.name,
-            active: error.product.active,
+            id:
+              error.product.id,
+
+            name:
+              error.product.name,
+
+            active:
+              error.product.active,
           },
         },
         {
@@ -253,14 +334,18 @@ export async function PATCH(
       );
     }
 
-    // Invalid base-unit / selling-unit setup
+    /*
+     * Invalid base-unit /
+     * selling-unit configuration.
+     */
     if (
       error instanceof
       ProductUnitConfigurationError
     ) {
       return NextResponse.json(
         {
-          error: error.message,
+          error:
+            error.message,
 
           code:
             "INVALID_PRODUCT_UNIT_CONFIGURATION",
@@ -271,13 +356,39 @@ export async function PATCH(
       );
     }
 
+    /*
+     * Cost / selling-price protection.
+     */
     if (
-      error instanceof Error &&
-      error.message === "Product not found"
+      error instanceof
+      ProductPricingError
     ) {
       return NextResponse.json(
         {
-          error: "Product not found",
+          error:
+            error.message,
+
+          code:
+            "INVALID_PRODUCT_PRICING",
+
+          warnings:
+            error.warnings,
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    if (
+      error instanceof Error &&
+      error.message ===
+        "Product not found"
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Product not found",
         },
         {
           status: 404,
@@ -287,7 +398,8 @@ export async function PATCH(
 
     return NextResponse.json(
       {
-        error: "Failed to update product",
+        error:
+          "Failed to update product",
       },
       {
         status: 500,
@@ -296,6 +408,14 @@ export async function PATCH(
   }
 }
 
+/*
+ * DELETE now means ARCHIVE.
+ *
+ * We do not physically delete Product
+ * records because sales, stock movements,
+ * purchases and cost history may depend
+ * on them.
+ */
 export async function DELETE(
   _request: Request,
   {
@@ -307,12 +427,84 @@ export async function DELETE(
   },
 ) {
   try {
-    const { id } = await params;
+    const { id } =
+      await params;
 
-    await deleteProduct(id);
+    const product =
+      await prisma.product.findUnique(
+        {
+          where: {
+            id,
+          },
+
+          select: {
+            id: true,
+            name: true,
+            stock: true,
+            active: true,
+          },
+        },
+      );
+
+    if (!product) {
+      return NextResponse.json(
+        {
+          error:
+            "Product not found",
+        },
+        {
+          status: 404,
+        },
+      );
+    }
+
+    /*
+     * Already archived.
+     * Treat this as a successful
+     * idempotent request.
+     */
+    if (!product.active) {
+      return NextResponse.json({
+        success: true,
+        archived: true,
+      });
+    }
+
+    /*
+     * Never archive stock that still
+     * physically exists.
+     */
+    if (
+      product.stock !== 0
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            `"${product.name}" still has ${product.stock} base units in stock. ` +
+            "Reduce, sell, or recount the stock to 0 before archiving it.",
+
+          code:
+            "PRODUCT_HAS_STOCK",
+        },
+        {
+          status: 409,
+        },
+      );
+    }
+
+    await prisma.product.update({
+      where: {
+        id,
+      },
+
+      data: {
+        active: false,
+      },
+    });
 
     return NextResponse.json({
       success: true,
+      archived: true,
     });
   } catch (error) {
     console.error(
@@ -322,7 +514,8 @@ export async function DELETE(
 
     return NextResponse.json(
       {
-        error: "Failed to delete product",
+        error:
+          "Failed to archive product",
       },
       {
         status: 500,

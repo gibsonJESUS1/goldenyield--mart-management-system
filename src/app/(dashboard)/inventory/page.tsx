@@ -4,6 +4,7 @@ import InventoryActionButton from "@/features/products/components/inventory-acti
 import UpdateCostPriceButton from "@/features/products/components/update-cost-price-button";
 import ViewCostHistoryButton from "@/features/products/components/view-cost-history-button";
 import { getProducts } from "@/lib/db/product";
+import BulkStockTakeButton from "@/features/products/components/bulk-stock-take-button";
 
 export const dynamic =
   "force-dynamic";
@@ -92,8 +93,12 @@ function getStockText(
 async function getInventoryItems(): Promise<
   InventoryItem[]
 > {
-  const products =
-    await getProducts();
+  const products = (
+  await getProducts()
+).filter(
+  (product) =>
+    product.active,
+);
 
   return products.map(
     (product) => {
@@ -224,346 +229,31 @@ export default async function InventoryPage() {
     );
 
   return (
-    <div className="space-y-5 sm:space-y-6">
-      <div className="min-w-0">
-        <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">
-          Inventory
-        </h1>
+ <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+  <div className="min-w-0">
+    <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">
+      Inventory
+    </h1>
 
-        <p className="mt-1 text-sm leading-6 text-slate-500 sm:text-base">
-          Monitor stock
-          levels, restock
-          products, adjust
-          stock, update cost
-          price, and track
-          inventory pressure.
-        </p>
-      </div>
+    <p className="mt-1 text-sm leading-6 text-slate-500 sm:text-base">
+      Monitor stock levels, restock products,
+      adjust stock, update cost price, and
+      perform physical stock counts.
+    </p>
+  </div>
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard
-          title="Inventory Items"
-          value={totalItems}
-        />
-
-        <SummaryCard
-          title="Low Stock Items"
-          value={
-            lowStockItems
-          }
-        />
-
-        <SummaryCard
-          title="Out of Stock Items"
-          value={
-            outOfStockItems
-          }
-        />
-
-        <SummaryCard
-          title="Estimated Stock Value"
-          value={`₦${stockValue.toLocaleString()}`}
-        />
-      </section>
-
-      {items.length === 0 ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-400 shadow-sm sm:p-10">
-          No inventory items
-          found.
-        </div>
-      ) : (
-        <>
-          <div className="grid grid-cols-1 gap-4 md:hidden">
-            {items.map(
-              (item) => (
-                <div
-                  key={
-                    item.id
-                  }
-                  className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
-                >
-                  <div className="flex flex-col gap-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <h2 className="break-words text-base font-semibold text-slate-900">
-                        {
-                          item.name
-                        }
-                      </h2>
-
-                      {getStockBadge(
-                        item.stock,
-                        item.lowStock,
-                      )}
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-2 text-sm text-slate-600">
-                      <p>
-                        <span className="font-medium text-slate-800">
-                          Category:
-                        </span>{" "}
-                        {
-                          item.category
-                        }
-                      </p>
-
-                      <p>
-                        <span className="font-medium text-slate-800">
-                          Owner:
-                        </span>{" "}
-                        {
-                          item.ownerName
-                        }
-                      </p>
-
-                      <p>
-                        <span className="font-medium text-slate-800">
-                          Base Unit:
-                        </span>{" "}
-                        {
-                          item.unit
-                        }
-                      </p>
-
-                      <p>
-                        <span className="font-medium text-slate-800">
-                          Stock:
-                        </span>{" "}
-                        {getStockText(
-                          item.stock,
-                          item.lowStock,
-                        )}
-                      </p>
-
-                      <p>
-                        <span className="font-medium text-slate-800">
-                          Cost Price /
-                          {
-                            " "
-                          }
-                          {
-                            item.unit
-                          }
-                          :
-                        </span>{" "}
-                        ₦
-                        {item.currentCostPrice.toLocaleString()}
-                      </p>
-
-                      <p>
-                        <span className="font-medium text-slate-800">
-                          Stock Value:
-                        </span>{" "}
-                        ₦
-                        {(
-                          item.stock *
-                          item.currentCostPrice
-                        ).toLocaleString()}
-                      </p>
-
-                      <p>
-                        <span className="font-medium text-slate-800">
-                          Low Stock
-                          Threshold:
-                        </span>{" "}
-                        {
-                          item.lowStock
-                        }
-                      </p>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      <InventoryActionButton
-                        productId={
-                          item.id
-                        }
-                        productName={
-                          item.name
-                        }
-                      />
-
-                      <UpdateCostPriceButton
-                        productId={
-                          item.id
-                        }
-                        productName={
-                          item.name
-                        }
-                        baseUnitName={
-                          item.unit
-                        }
-                        currentCostPrice={
-                          item.currentCostPrice
-                        }
-                        saleUnits={
-                          item.saleUnits
-                        }
-                      />
-
-                      <ViewCostHistoryButton
-                        productId={
-                          item.id
-                        }
-                        productName={
-                          item.name
-                        }
-                      />
-                    </div>
-                  </div>
-                </div>
-              ),
-            )}
-          </div>
-
-          <div className="hidden md:block">
-            <DataTable
-              data={items}
-              columns={[
-                {
-                  header:
-                    "Name",
-                  accessor:
-                    "name",
-                },
-
-                {
-                  header:
-                    "Category",
-                  accessor:
-                    "category",
-                },
-
-                {
-                  header:
-                    "Owner",
-                  accessor:
-                    "ownerName",
-                },
-
-                {
-                  header:
-                    "Base Unit",
-                  accessor:
-                    "unit",
-                },
-
-                {
-                  header:
-                    "Stock",
-                  accessor:
-                    "stock",
-
-                  render: (
-                    row,
-                  ) => {
-                    if (
-                      row.stock ===
-                      0
-                    ) {
-                      return (
-                        <span className="font-semibold text-red-600">
-                          Out
-                        </span>
-                      );
-                    }
-
-                    if (
-                      row.stock <=
-                      row.lowStock
-                    ) {
-                      return (
-                        <span className="font-semibold text-amber-600">
-                          {
-                            row.stock
-                          }{" "}
-                          (Low)
-                        </span>
-                      );
-                    }
-
-                    return row.stock;
-                  },
-                },
-
-                {
-                  header:
-                    "Cost Price",
-                  accessor:
-                    "currentCostPrice",
-
-                  render: (
-                    row,
-                  ) =>
-                    `₦${row.currentCostPrice.toLocaleString()}`,
-                },
-
-                {
-                  header:
-                    "Stock Value",
-                  accessor:
-                    "price",
-
-                  render: (
-                    row,
-                  ) =>
-                    `₦${(
-                      row.stock *
-                      row.currentCostPrice
-                    ).toLocaleString()}`,
-                },
-
-                {
-                  header:
-                    "Actions",
-                  accessor:
-                    "id",
-
-                  render: (
-                    row,
-                  ) => (
-                    <div className="flex flex-wrap gap-2">
-                      <InventoryActionButton
-                        productId={
-                          row.id
-                        }
-                        productName={
-                          row.name
-                        }
-                      />
-
-                      <UpdateCostPriceButton
-                        productId={
-                          row.id
-                        }
-                        productName={
-                          row.name
-                        }
-                        baseUnitName={
-                          row.unit
-                        }
-                        currentCostPrice={
-                          row.currentCostPrice
-                        }
-                        saleUnits={
-                          row.saleUnits
-                        }
-                      />
-
-                      <ViewCostHistoryButton
-                        productId={
-                          row.id
-                        }
-                        productName={
-                          row.name
-                        }
-                      />
-                    </div>
-                  ),
-                },
-              ]}
-            />
-          </div>
-        </>
-      )}
-    </div>
+  <BulkStockTakeButton
+    products={items.map(
+      (item) => ({
+        id: item.id,
+        name: item.name,
+        category:
+          item.category,
+        unit: item.unit,
+        stock: item.stock,
+      }),
+    )}
+  />
+</div>
   );
 }
