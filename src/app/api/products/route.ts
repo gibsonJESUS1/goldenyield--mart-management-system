@@ -10,6 +10,10 @@ import {
   ProductUnitConfigurationError,
 } from "@/lib/product-unit-config";
 
+import {
+  ProductPricingError,
+} from "@/lib/product-pricing";
+
 export async function GET() {
   try {
     const products = await getProducts();
@@ -32,25 +36,44 @@ export async function GET() {
 
       active: product.active,
 
+      weightTrackingEnabled: product.weightTrackingEnabled,
+      weightStockGrams: product.weightStockGrams,
+      lowWeightStockGrams: product.lowWeightStockGrams,
+
+      costPerKg:
+        product.costPerKg != null
+          ? Number(product.costPerKg)
+          : null,
+
+      pricePerKg:
+        product.pricePerKg != null
+          ? Number(product.pricePerKg)
+          : null,
+
+      allowVariablePiecePrice:
+        product.allowVariablePiecePrice,
+
+      minPiecePrice:
+        product.minPiecePrice != null
+          ? Number(product.minPiecePrice)
+          : null,
+
+      maxPiecePrice:
+        product.maxPiecePrice != null
+          ? Number(product.maxPiecePrice)
+          : null,
+
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
 
       saleUnits: product.saleUnits.map((saleUnit) => ({
         id: saleUnit.id,
-
         unitId: saleUnit.unitId,
         unitName: saleUnit.unit.name,
-
-        quantityInBaseUnit:
-          saleUnit.quantityInBaseUnit,
-
-        sellingPrice: Number(
-          saleUnit.sellingPrice,
-        ),
-
+        quantityInBaseUnit: saleUnit.quantityInBaseUnit,
+        sellingPrice: Number(saleUnit.sellingPrice),
         isDefault: saleUnit.isDefault,
         active: saleUnit.active,
-
         priceRules: saleUnit.priceRules.map((rule) => ({
           id: rule.id,
           quantity: rule.quantity,
@@ -62,18 +85,11 @@ export async function GET() {
 
     return NextResponse.json(normalized);
   } catch (error) {
-    console.error(
-      "GET /api/products error:",
-      error,
-    );
+    console.error("GET /api/products error:", error);
 
     return NextResponse.json(
-      {
-        error: "Failed to fetch products",
-      },
-      {
-        status: 500,
-      },
+      { error: "Failed to fetch products" },
+      { status: 500 },
     );
   }
 }
@@ -83,23 +99,18 @@ export async function POST(request: Request) {
     const body =
       (await request.json()) as {
         name: string;
-
         ownerId: string;
         categoryId: string;
         unitId: string;
-
         stock: number;
         lowStock: number;
-
+        currentCostPrice?: number | null;
         active?: boolean;
 
         saleUnits: Array<{
           unitId: string;
-
           quantityInBaseUnit: number;
-
           sellingPrice: number;
-
           isDefault?: boolean;
           active?: boolean;
 
@@ -122,12 +133,8 @@ export async function POST(request: Request) {
       body.saleUnits.length === 0
     ) {
       return NextResponse.json(
-        {
-          error: "Invalid product payload",
-        },
-        {
-          status: 400,
-        },
+        { error: "Invalid product payload" },
+        { status: 400 },
       );
     }
 
@@ -149,94 +156,96 @@ export async function POST(request: Request) {
 
         stock: product.stock,
         lowStock: product.lowStock,
-
         active: product.active,
+
+        weightTrackingEnabled: product.weightTrackingEnabled,
+        weightStockGrams: product.weightStockGrams,
+        lowWeightStockGrams: product.lowWeightStockGrams,
+
+        costPerKg:
+          product.costPerKg != null ? Number(product.costPerKg) : null,
+
+        pricePerKg:
+          product.pricePerKg != null ? Number(product.pricePerKg) : null,
+
+        allowVariablePiecePrice: product.allowVariablePiecePrice,
+
+        minPiecePrice:
+          product.minPiecePrice != null ? Number(product.minPiecePrice) : null,
+
+        maxPiecePrice:
+          product.maxPiecePrice != null ? Number(product.maxPiecePrice) : null,
 
         createdAt: product.createdAt,
         updatedAt: product.updatedAt,
 
         saleUnits: product.saleUnits.map((saleUnit) => ({
           id: saleUnit.id,
-
           unitId: saleUnit.unitId,
           unitName: saleUnit.unit.name,
-
-          quantityInBaseUnit:
-            saleUnit.quantityInBaseUnit,
-
-          sellingPrice: Number(
-            saleUnit.sellingPrice,
-          ),
-
+          quantityInBaseUnit: saleUnit.quantityInBaseUnit,
+          sellingPrice: Number(saleUnit.sellingPrice),
           isDefault: saleUnit.isDefault,
           active: saleUnit.active,
-
-          priceRules: saleUnit.priceRules.map(
-            (rule) => ({
-              id: rule.id,
-              quantity: rule.quantity,
-              price: Number(rule.price),
-              active: rule.active,
-            }),
-          ),
+          priceRules: saleUnit.priceRules.map((rule) => ({
+            id: rule.id,
+            quantity: rule.quantity,
+            price: Number(rule.price),
+            active: rule.active,
+          })),
         })),
       },
-      {
-        status: 201,
-      },
+      { status: 201 },
     );
   } catch (error) {
-    console.error(
-      "POST /api/products error:",
-      error,
-    );
+    console.error("POST /api/products error:", error);
 
-    // Prevent duplicate products
     if (error instanceof DuplicateProductError) {
       return NextResponse.json(
         {
           error: error.message,
-
           code: error.product.active
             ? "DUPLICATE_ACTIVE_PRODUCT"
             : "DUPLICATE_ARCHIVED_PRODUCT",
-
           existingProduct: {
             id: error.product.id,
             name: error.product.name,
             active: error.product.active,
           },
         },
-        {
-          status: 409,
-        },
+        { status: 409 },
       );
     }
 
-    // Protect base-unit / selling-unit configuration
-    if (
-      error instanceof ProductUnitConfigurationError
-    ) {
+    if (error instanceof ProductUnitConfigurationError) {
       return NextResponse.json(
         {
           error: error.message,
+          code: "INVALID_PRODUCT_UNIT_CONFIGURATION",
+        },
+        { status: 400 },
+      );
+    }
 
-          code:
-            "INVALID_PRODUCT_UNIT_CONFIGURATION",
-        },
+    if (error instanceof ProductPricingError) {
+      return NextResponse.json(
         {
-          status: 400,
+          error: error.message,
+          code: "INVALID_PRODUCT_PRICING",
+          warnings: error.warnings,
         },
+        { status: 400 },
       );
     }
 
     return NextResponse.json(
       {
-        error: "Failed to create product",
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to create product",
       },
-      {
-        status: 500,
-      },
+      { status: 500 },
     );
   }
 }

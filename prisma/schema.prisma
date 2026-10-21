@@ -49,8 +49,19 @@ model Product {
   lowStock         Int      @default(0)
   active           Boolean  @default(true)
   currentCostPrice Decimal? @db.Decimal(12, 2)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+
+  weightTrackingEnabled   Boolean  @default(false)
+  weightStockGrams        Int      @default(0)
+  lowWeightStockGrams     Int      @default(0)
+  costPerKg               Decimal? @db.Decimal(12, 2)
+  pricePerKg              Decimal? @db.Decimal(12, 2)
+
+  allowVariablePiecePrice Boolean  @default(false)
+  minPiecePrice           Decimal? @db.Decimal(12, 2)
+  maxPiecePrice           Decimal? @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   owner               Owner                    @relation(fields: [ownerId], references: [id])
   category            Category                 @relation(fields: [categoryId], references: [id])
@@ -103,6 +114,12 @@ enum PaymentStatus {
   owed
 }
 
+enum SaleEntryMode {
+  STANDARD
+  WEIGHT_KG
+  VARIABLE_PIECE
+}
+
 model Sale {
   id           String   @id @default(cuid())
   customerName String?
@@ -118,18 +135,21 @@ model Sale {
 }
 
 model SaleItem {
-  id                 String   @id @default(cuid())
+  id                 String        @id @default(cuid())
   saleId             String
   productId          String
   saleUnitId         String?
   quantity           Int
   quantityInBaseUnit Int
-  unitPrice          Decimal  @db.Decimal(12, 2)
-  lineTotal          Decimal  @db.Decimal(12, 2)
-  unitCostPrice      Decimal? @db.Decimal(12, 2)
-  lineCostTotal      Decimal? @db.Decimal(12, 2)
-  lineProfit         Decimal? @db.Decimal(12, 2)
-  createdAt          DateTime @default(now())
+  unitPrice          Decimal       @db.Decimal(12, 2)
+  lineTotal          Decimal       @db.Decimal(12, 2)
+  unitCostPrice      Decimal?      @db.Decimal(12, 2)
+  lineCostTotal      Decimal?      @db.Decimal(12, 2)
+  lineProfit         Decimal?      @db.Decimal(12, 2)
+  saleMode           SaleEntryMode @default(STANDARD)
+  weightGrams        Int?
+  manualUnitPrice    Decimal?      @db.Decimal(12, 2)
+  createdAt          DateTime      @default(now())
 
   sale     Sale             @relation(fields: [saleId], references: [id], onDelete: Cascade)
   product  Product          @relation(fields: [productId], references: [id])
@@ -137,6 +157,7 @@ model SaleItem {
 
   @@index([saleId])
   @@index([productId])
+  @@index([saleMode])
 }
 
 enum DebtTransactionType {
@@ -182,17 +203,24 @@ enum StockMovementType {
   OUT
 }
 
+enum InventoryBucket {
+  COUNT
+  WEIGHT_GRAMS
+}
+
 model StockMovement {
   id        String            @id @default(cuid())
   productId String
   type      StockMovementType
   quantity  Int
+  bucket    InventoryBucket   @default(COUNT)
   note      String?
   createdAt DateTime          @default(now())
 
   product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([productId])
+  @@index([bucket])
 }
 
 model Purchase {

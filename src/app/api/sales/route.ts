@@ -1,182 +1,79 @@
-import {
-  NextResponse,
-} from "next/server";
+import { NextResponse } from "next/server";
 
 import {
   createSaleWithInventory,
   getSales,
   SaleProtectionError,
+  type SaleInputMode,
 } from "@/lib/db/sale";
 
 function getTodayRange() {
-  const start =
-    new Date();
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
 
-  start.setHours(
-    0,
-    0,
-    0,
-    0,
-  );
+  const end = new Date();
+  end.setDate(end.getDate() + 1);
+  end.setHours(0, 0, 0, 0);
 
-  const end =
-    new Date();
-
-  end.setHours(
-    23,
-    59,
-    59,
-    999,
-  );
-
-  return {
-    start,
-    end,
-  };
+  return { start, end };
 }
 
-function getWeekRange() {
-  const now =
-    new Date();
+function getRollingRange(days: number) {
+  const now = new Date();
 
-  const day =
-    now.getDay();
+  const start = new Date();
+  start.setDate(now.getDate() - (days - 1));
+  start.setHours(0, 0, 0, 0);
 
-  const diffToMonday =
-    day === 0
-      ? -6
-      : 1 - day;
+  const end = new Date();
+  end.setDate(end.getDate() + 1);
+  end.setHours(0, 0, 0, 0);
 
-  const start =
-    new Date(now);
-
-  start.setDate(
-    now.getDate() +
-      diffToMonday,
-  );
-
-  start.setHours(
-    0,
-    0,
-    0,
-    0,
-  );
-
-  const end =
-    new Date();
-
-  end.setHours(
-    23,
-    59,
-    59,
-    999,
-  );
-
-  return {
-    start,
-    end,
-  };
+  return { start, end };
 }
 
 function getMonthRange() {
-  const now =
-    new Date();
+  const now = new Date();
 
-  const start =
-    new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      1,
-    );
-
-  start.setHours(
-    0,
-    0,
-    0,
-    0,
+  const start = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    1,
   );
 
-  const end =
-    new Date();
+  const end = new Date();
+  end.setDate(end.getDate() + 1);
+  end.setHours(0, 0, 0, 0);
 
-  end.setHours(
-    23,
-    59,
-    59,
-    999,
-  );
-
-  return {
-    start,
-    end,
-  };
+  return { start, end };
 }
 
-function resolveRange(
-  searchParams: URLSearchParams,
-) {
-  const range =
-    searchParams.get(
-      "range",
-    );
+function resolveRange(searchParams: URLSearchParams) {
+  const range = searchParams.get("range");
 
-  if (
-    range === "today"
-  ) {
-    return getTodayRange();
-  }
+  if (range === "today") return getTodayRange();
+  if (range === "7d") return getRollingRange(7);
+  if (range === "30d") return getRollingRange(30);
+  if (range === "month") return getMonthRange();
 
-  if (
-    range === "week"
-  ) {
-    return getWeekRange();
-  }
-
-  if (
-    range === "month"
-  ) {
-    return getMonthRange();
-  }
-
-  const startDate =
-    searchParams.get(
-      "startDate",
-    );
-
-  const endDate =
-    searchParams.get(
-      "endDate",
-    );
+  const startDate = searchParams.get("startDate");
+  const endDate = searchParams.get("endDate");
 
   return {
-    start:
-      startDate
-        ? new Date(
-            startDate,
-          )
-        : undefined,
-
-    end:
-      endDate
-        ? new Date(
-            endDate,
-          )
-        : undefined,
+    start: startDate ? new Date(startDate) : undefined,
+    end: endDate ? new Date(endDate) : undefined,
   };
 }
 
 type SalesRequestItem = {
   productId: string;
-  productSaleUnitId: string;
-  quantity: number;
+  mode?: SaleInputMode;
+  productSaleUnitId?: string;
+  quantity?: number;
+  weightGrams?: number;
+  manualUnitPrice?: number;
 
-  /*
-   * The current frontend still sends
-   * these fields.
-   *
-   * They are deliberately ignored by
-   * the backend for pricing/security.
-   */
+  // Legacy client fields: accepted but never trusted.
   unitPrice?: number;
   total?: number;
   baseUnitsConsumed?: number;
@@ -184,170 +81,163 @@ type SalesRequestItem = {
 
 type SalesRequestBody = {
   customerName?: string;
-
   subtotal?: number;
-
   amountPaid: number;
-
   balance?: number;
-
   items: SalesRequestItem[];
 };
+
+function isValidMode(value: unknown): value is SaleInputMode {
+  return (
+    value === "STANDARD" ||
+    value === "WEIGHT_KG" ||
+    value === "VARIABLE_PIECE"
+  );
+}
 
 function isValidSalesRequestItem(
   item: unknown,
 ): item is SalesRequestItem {
-  if (
-    !item ||
-    typeof item !==
-      "object"
-  ) {
+  if (!item || typeof item !== "object") {
     return false;
   }
 
   const candidate =
     item as Partial<SalesRequestItem>;
 
+  if (
+    typeof candidate.productId !== "string" ||
+    candidate.productId.trim().length === 0
+  ) {
+    return false;
+  }
+
+  const mode: SaleInputMode =
+    isValidMode(candidate.mode)
+      ? candidate.mode
+      : "STANDARD";
+
+  if (mode === "WEIGHT_KG") {
+    return (
+      Number.isInteger(Number(candidate.weightGrams)) &&
+      Number(candidate.weightGrams) > 0
+    );
+  }
+
+  if (mode === "VARIABLE_PIECE") {
+    return (
+      Number.isInteger(Number(candidate.quantity)) &&
+      Number(candidate.quantity) > 0 &&
+      Number.isFinite(Number(candidate.manualUnitPrice)) &&
+      Number(candidate.manualUnitPrice) > 0
+    );
+  }
+
   return (
-    typeof candidate.productId ===
-      "string" &&
-    candidate.productId.trim()
-      .length > 0 &&
-    typeof candidate.productSaleUnitId ===
-      "string" &&
-    candidate.productSaleUnitId.trim()
-      .length > 0 &&
-    Number.isInteger(
-      Number(
-        candidate.quantity,
-      ),
-    ) &&
-    Number(
-      candidate.quantity,
-    ) > 0
+    typeof candidate.productSaleUnitId === "string" &&
+    candidate.productSaleUnitId.trim().length > 0 &&
+    Number.isInteger(Number(candidate.quantity)) &&
+    Number(candidate.quantity) > 0
   );
 }
 
-export async function GET(
-  request: Request,
+function paymentStatus(
+  amountPaid: number,
+  balance: number,
 ) {
+  if (balance <= 0) return "paid";
+  if (amountPaid > 0) return "partial";
+  return "owed";
+}
+
+type SaleWithDetails =
+  Awaited<ReturnType<typeof getSales>>[number];
+
+function normalizeSale(sale: SaleWithDetails) {
+  const balance = Number(sale.balance);
+  const amountPaid = Number(sale.amountPaid);
+
+  return {
+    id: sale.id,
+    customerName: sale.customerName,
+    subtotal: Number(sale.subtotal),
+    amountPaid,
+    balance,
+    paymentStatus: paymentStatus(amountPaid, balance),
+    note: sale.note,
+    createdAt: sale.createdAt,
+    updatedAt: sale.updatedAt,
+
+    items: sale.items.map((item) => {
+      const saleUnitName =
+        item.saleMode === "WEIGHT_KG"
+          ? "Kg"
+          : item.saleMode === "VARIABLE_PIECE"
+            ? "Piece"
+            : item.saleUnit?.unit?.name ?? "Base unit";
+
+      return {
+        id: item.id,
+        productId: item.productId,
+        productName: item.product.name,
+
+        saleMode: item.saleMode,
+
+        saleUnitId: item.saleUnitId,
+        productSaleUnitId: item.saleUnitId ?? "",
+        saleUnitName,
+
+        quantity: item.quantity,
+
+        quantityInBaseUnit:
+          item.quantityInBaseUnit,
+
+        baseUnitsConsumed:
+          item.quantityInBaseUnit,
+
+        weightGrams:
+          item.weightGrams,
+
+        manualUnitPrice:
+          item.manualUnitPrice != null
+            ? Number(item.manualUnitPrice)
+            : null,
+
+        unitPrice:
+          Number(item.unitPrice),
+
+        lineTotal:
+          Number(item.lineTotal),
+
+        total:
+          Number(item.lineTotal),
+
+        createdAt:
+          item.createdAt,
+
+        ownerName:
+          item.product.owner?.name ??
+          null,
+      };
+    }),
+  };
+}
+
+export async function GET(request: Request) {
   try {
-    const {
-      searchParams,
-    } = new URL(
-      request.url,
-    );
+    const { searchParams } =
+      new URL(request.url);
 
-    const {
-      start,
-      end,
-    } = resolveRange(
-      searchParams,
-    );
+    const { start, end } =
+      resolveRange(searchParams);
 
-    const sales =
-      await getSales({
-        startDate:
-          start,
-
-        endDate:
-          end,
-      });
-
-    /*
-     * IMPORTANT:
-     *
-     * Cost price, line cost and profit
-     * are intentionally NOT returned.
-     *
-     * This endpoint is used by the
-     * cashier-facing sales screen.
-     */
-    const normalized =
-      sales.map(
-        (sale) => ({
-          id:
-            sale.id,
-
-          customerName:
-            sale.customerName,
-
-          subtotal:
-            Number(
-              sale.subtotal,
-            ),
-
-          amountPaid:
-            Number(
-              sale.amountPaid,
-            ),
-
-          balance:
-            Number(
-              sale.balance,
-            ),
-
-          note:
-            sale.note,
-
-          createdAt:
-            sale.createdAt,
-
-          updatedAt:
-            sale.updatedAt,
-
-          items:
-            sale.items.map(
-              (item) => ({
-                id:
-                  item.id,
-
-                productId:
-                  item.productId,
-
-                productName:
-                  item.product
-                    .name,
-
-                saleUnitId:
-                  item.saleUnitId,
-
-                saleUnitName:
-                  item.saleUnit
-                    ?.unit
-                    ?.name ??
-                  "Base unit",
-
-                quantity:
-                  item.quantity,
-
-                quantityInBaseUnit:
-                  item.quantityInBaseUnit,
-
-                unitPrice:
-                  Number(
-                    item.unitPrice,
-                  ),
-
-                lineTotal:
-                  Number(
-                    item.lineTotal,
-                  ),
-
-                createdAt:
-                  item.createdAt,
-
-                ownerName:
-                  item.product
-                    .owner?.name ??
-                  null,
-              }),
-            ),
-        }),
-      );
+    const sales = await getSales({
+      startDate: start,
+      endDate: end,
+    });
 
     return NextResponse.json(
-      normalized,
+      sales.map(normalizeSale),
     );
   } catch (error) {
     console.error(
@@ -367,19 +257,14 @@ export async function GET(
   }
 }
 
-export async function POST(
-  request: Request,
-) {
+export async function POST(request: Request) {
   try {
     const body =
       (await request.json()) as Partial<SalesRequestBody>;
 
     if (
-      !Array.isArray(
-        body.items,
-      ) ||
-      body.items.length ===
-        0
+      !Array.isArray(body.items) ||
+      body.items.length === 0
     ) {
       return NextResponse.json(
         {
@@ -393,14 +278,8 @@ export async function POST(
     }
 
     if (
-      !Number.isFinite(
-        Number(
-          body.amountPaid,
-        ),
-      ) ||
-      Number(
-        body.amountPaid,
-      ) < 0
+      !Number.isFinite(Number(body.amountPaid)) ||
+      Number(body.amountPaid) < 0
     ) {
       return NextResponse.json(
         {
@@ -416,9 +295,7 @@ export async function POST(
     const invalidItem =
       body.items.find(
         (item) =>
-          !isValidSalesRequestItem(
-            item,
-          ),
+          !isValidSalesRequestItem(item),
       );
 
     if (invalidItem) {
@@ -433,148 +310,55 @@ export async function POST(
       );
     }
 
-    /*
-     * Only IDs + quantity are trusted
-     * from the browser.
-     *
-     * The backend calculates:
-     * - sale-unit conversion
-     * - selling price
-     * - quantity deal
-     * - line total
-     * - subtotal
-     * - cost
-     * - profit
-     */
     const sale =
-      await createSaleWithInventory(
-        {
-          customerName:
-            body.customerName?.trim() ||
-            "Walk-in Customer",
+      await createSaleWithInventory({
+        customerName:
+          body.customerName?.trim() ||
+          "Walk-in Customer",
 
-          clientSubtotal:
-            body.subtotal !=
-              null &&
-            Number.isFinite(
-              Number(
-                body.subtotal,
-              ),
-            )
-              ? Number(
-                  body.subtotal,
-                )
-              : undefined,
+        clientSubtotal:
+          body.subtotal != null &&
+          Number.isFinite(Number(body.subtotal))
+            ? Number(body.subtotal)
+            : undefined,
 
-          amountPaid:
-            Number(
-              body.amountPaid,
-            ),
+        amountPaid:
+          Number(body.amountPaid),
 
-          items:
-            body.items.map(
-              (item) => ({
-                productId:
-                  item.productId,
-
-                productSaleUnitId:
-                  item.productSaleUnitId,
-
-                quantity:
-                  Number(
-                    item.quantity,
-                  ),
-              }),
-            ),
-        },
-      );
-
-    /*
-     * Same rule as GET:
-     * no cost or profit information
-     * is sent to the cashier.
-     */
-    const normalized = {
-      id:
-        sale.id,
-
-      customerName:
-        sale.customerName,
-
-      subtotal:
-        Number(
-          sale.subtotal,
-        ),
-
-      amountPaid:
-        Number(
-          sale.amountPaid,
-        ),
-
-      balance:
-        Number(
-          sale.balance,
-        ),
-
-      note:
-        sale.note,
-
-      createdAt:
-        sale.createdAt,
-
-      updatedAt:
-        sale.updatedAt,
-
-      items:
-        sale.items.map(
-          (item) => ({
-            id:
-              item.id,
-
+        items:
+          body.items.map((item) => ({
             productId:
               item.productId,
 
-            productName:
-              item.product.name,
+            mode:
+              isValidMode(item.mode)
+                ? item.mode
+                : "STANDARD",
 
-            saleUnitId:
-              item.saleUnitId,
-
-            saleUnitName:
-              item.saleUnit
-                ?.unit
-                ?.name ??
-              "Base unit",
+            productSaleUnitId:
+              item.productSaleUnitId,
 
             quantity:
-              item.quantity,
+              item.quantity != null
+                ? Number(item.quantity)
+                : undefined,
 
-            quantityInBaseUnit:
-              item.quantityInBaseUnit,
+            weightGrams:
+              item.weightGrams != null
+                ? Number(item.weightGrams)
+                : undefined,
 
-            unitPrice:
-              Number(
-                item.unitPrice,
-              ),
-
-            lineTotal:
-              Number(
-                item.lineTotal,
-              ),
-
-            createdAt:
-              item.createdAt,
-
-            ownerName:
-              item.product.owner
-                ?.name ??
-              null,
-          }),
-        ),
-    };
+            manualUnitPrice:
+              item.manualUnitPrice != null
+                ? Number(item.manualUnitPrice)
+                : undefined,
+          })),
+      });
 
     return NextResponse.json(
-      normalized,
+      normalizeSale(
+        sale as SaleWithDetails,
+      ),
       {
         status: 201,
       },
@@ -586,16 +370,12 @@ export async function POST(
     );
 
     if (
-      error instanceof
-      SaleProtectionError
+      error instanceof SaleProtectionError
     ) {
       return NextResponse.json(
         {
-          error:
-            error.message,
-
-          code:
-            error.code,
+          error: error.message,
+          code: error.code,
         },
         {
           status: 409,

@@ -15,6 +15,7 @@ import RestockProductButton from "@/features/products/components/restock-product
 import { getProducts } from "@/lib/db/product";
 
 import RestoreProductButton from "@/features/products/components/restore-product-button";
+import FlexibleSaleConfigButton from "@/features/products/components/flexible-sale-config-button";
 
 
 
@@ -1222,6 +1223,11 @@ export default async function ProductsPage({
 
 
 
+                          <FlexibleSaleConfigButton
+                            productId={product.id}
+                            productName={product.name}
+                          />
+
                           <RestockProductButton
 
                             productId={
@@ -1607,6 +1613,11 @@ export default async function ProductsPage({
                                 />
 
 
+
+                                <FlexibleSaleConfigButton
+                                  productId={product.id}
+                                  productName={product.name}
+                                />
 
                                 <RestockProductButton
 
