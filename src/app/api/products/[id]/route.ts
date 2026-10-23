@@ -69,71 +69,148 @@ function flexibleFields(product: {
 
 export async function GET(
   _request: Request,
-  { params }: { params: Promise<{ id: string }> },
+  {
+    params,
+  }: {
+    params: Promise<{
+      id: string;
+    }>;
+  },
 ) {
   try {
     const { id } = await params;
-    const product = await getProductById(id);
+
+    const product =
+      await getProductById(id);
 
     if (!product) {
       return NextResponse.json(
-        { error: "Product not found" },
-        { status: 404 },
+        {
+          error:
+            "Product not found",
+        },
+        {
+          status: 404,
+        },
       );
     }
 
     return NextResponse.json({
       id: product.id,
+
       name: product.name,
 
-      ownerId: product.ownerId,
-      ownerName: product.owner.name,
+      ownerId:
+        product.ownerId,
 
-      categoryId: product.categoryId,
-      category: product.category.name,
+      ownerName:
+        product.owner.name,
 
-      unitId: product.unitId,
-      unit: product.unit.name,
+      categoryId:
+        product.categoryId,
 
-      stock: product.stock,
-      lowStock: product.lowStock,
+      category:
+        product.category.name,
 
-      active: product.active,
+      unitId:
+        product.unitId,
 
-      ...flexibleFields(product),
+      unit:
+        product.unit.name,
 
-      createdAt: product.createdAt,
-      updatedAt: product.updatedAt,
+      stock:
+        product.stock,
 
-      saleUnits: product.saleUnits.map((saleUnit) => ({
-        id: saleUnit.id,
-        unitId: saleUnit.unitId,
-        unitName: saleUnit.unit.name,
-        quantityInBaseUnit: saleUnit.quantityInBaseUnit,
-        sellingPrice: Number(saleUnit.sellingPrice),
-        isDefault: saleUnit.isDefault,
-        active: saleUnit.active,
-        priceRules: saleUnit.priceRules.map((rule) => ({
-          id: rule.id,
-          quantity: rule.quantity,
-          price: Number(rule.price),
-          active: rule.active,
-        })),
-      })),
+      lowStock:
+        product.lowStock,
+
+      active:
+        product.active,
+
+      ...flexibleFields(
+        product,
+      ),
+
+      createdAt:
+        product.createdAt,
+
+      updatedAt:
+        product.updatedAt,
+
+      saleUnits:
+        product.saleUnits.map(
+          (saleUnit) => ({
+            id:
+              saleUnit.id,
+
+            unitId:
+              saleUnit.unitId,
+
+            unitName:
+              saleUnit.unit.name,
+
+            quantityInBaseUnit:
+              saleUnit.quantityInBaseUnit,
+
+            sellingPrice:
+              Number(
+                saleUnit.sellingPrice,
+              ),
+
+            isDefault:
+              saleUnit.isDefault,
+
+            active:
+              saleUnit.active,
+
+            priceRules:
+              saleUnit.priceRules.map(
+                (rule) => ({
+                  id:
+                    rule.id,
+
+                  quantity:
+                    rule.quantity,
+
+                  price:
+                    Number(
+                      rule.price,
+                    ),
+
+                  active:
+                    rule.active,
+                }),
+              ),
+          }),
+        ),
     });
   } catch (error) {
-    console.error("GET /api/products/[id] error:", error);
+    console.error(
+      "GET /api/products/[id] error:",
+      error,
+    );
 
     return NextResponse.json(
-      { error: "Failed to fetch product" },
-      { status: 500 },
+      {
+        error:
+          "Failed to fetch product",
+      },
+      {
+        status: 500,
+      },
     );
   }
 }
 
 export async function PATCH(
   request: Request,
-  { params }: { params: Promise<{ id: string }> },
+  {
+    params,
+  }: {
+    params: Promise<{
+      id: string;
+    }>;
+  },
 ) {
   try {
     const { id } = await params;
@@ -141,214 +218,498 @@ export async function PATCH(
     const body =
       (await request.json()) as {
         name: string;
+
         ownerId: string;
+
         categoryId: string;
+
         unitId: string;
+
         stock: number;
+
         lowStock: number;
+
+        /*
+         * Cost of ONE base stock unit.
+         *
+         * Examples:
+         * Piece -> cost of one Piece
+         * Bottle -> cost of one Bottle
+         * Pack -> cost of one Pack
+         */
+        currentCostPrice?:
+          | number
+          | null;
+
         active?: boolean;
 
         saleUnits: Array<{
           id?: string;
+
           unitId: string;
+
           quantityInBaseUnit: number;
+
           sellingPrice: number;
+
           isDefault?: boolean;
+
           active?: boolean;
 
           priceRules?: Array<{
             quantity: number;
+
             price: number;
+
             active?: boolean;
           }>;
         }>;
       };
 
+    /*
+     * Basic product validation.
+     */
     if (
       !body.name?.trim() ||
       !body.ownerId ||
       !body.categoryId ||
       !body.unitId ||
-      typeof body.stock !== "number" ||
-      typeof body.lowStock !== "number" ||
-      !Array.isArray(body.saleUnits) ||
-      body.saleUnits.length === 0
+      typeof body.stock !==
+        "number" ||
+      !Number.isFinite(
+        body.stock,
+      ) ||
+      typeof body.lowStock !==
+        "number" ||
+      !Number.isFinite(
+        body.lowStock,
+      ) ||
+      !Array.isArray(
+        body.saleUnits,
+      ) ||
+      body.saleUnits.length ===
+        0
     ) {
       return NextResponse.json(
-        { error: "Invalid product payload" },
-        { status: 400 },
+        {
+          error:
+            "Invalid product payload",
+        },
+        {
+          status: 400,
+        },
       );
     }
 
-    const product = await updateProduct(id, body);
+    /*
+     * Stock values must remain
+     * non-negative whole numbers.
+     */
+    if (
+      !Number.isInteger(
+        body.stock,
+      ) ||
+      body.stock < 0
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Base stock quantity must be 0 or more.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    if (
+      !Number.isInteger(
+        body.lowStock,
+      ) ||
+      body.lowStock < 0
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Low stock threshold must be 0 or more.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    /*
+     * Cost-price validation.
+     *
+     * null is allowed here because
+     * updateProduct() performs the
+     * stronger business validation
+     * based on the existing product
+     * and current stock.
+     */
+    if (
+      body.currentCostPrice !=
+        null &&
+      (typeof body.currentCostPrice !==
+        "number" ||
+        !Number.isFinite(
+          body.currentCostPrice,
+        ) ||
+        body.currentCostPrice <=
+          0)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "Cost price must be greater than zero.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    const product =
+      await updateProduct(
+        id,
+        body,
+      );
 
     return NextResponse.json({
       id: product.id,
+
       name: product.name,
 
-      ownerId: product.ownerId,
-      ownerName: product.owner.name,
+      ownerId:
+        product.ownerId,
 
-      categoryId: product.categoryId,
-      category: product.category.name,
+      ownerName:
+        product.owner.name,
 
-      unitId: product.unitId,
-      unit: product.unit.name,
+      categoryId:
+        product.categoryId,
 
-      stock: product.stock,
-      lowStock: product.lowStock,
+      category:
+        product.category.name,
 
-      active: product.active,
+      unitId:
+        product.unitId,
 
-      ...flexibleFields(product),
+      unit:
+        product.unit.name,
 
-      createdAt: product.createdAt,
-      updatedAt: product.updatedAt,
+      stock:
+        product.stock,
 
-      saleUnits: product.saleUnits.map((saleUnit) => ({
-        id: saleUnit.id,
-        unitId: saleUnit.unitId,
-        unitName: saleUnit.unit.name,
-        quantityInBaseUnit: saleUnit.quantityInBaseUnit,
-        sellingPrice: Number(saleUnit.sellingPrice),
-        isDefault: saleUnit.isDefault,
-        active: saleUnit.active,
-        priceRules: saleUnit.priceRules.map((rule) => ({
-          id: rule.id,
-          quantity: rule.quantity,
-          price: Number(rule.price),
-          active: rule.active,
-        })),
-      })),
+      lowStock:
+        product.lowStock,
+
+      active:
+        product.active,
+
+      ...flexibleFields(
+        product,
+      ),
+
+      createdAt:
+        product.createdAt,
+
+      updatedAt:
+        product.updatedAt,
+
+      saleUnits:
+        product.saleUnits.map(
+          (saleUnit) => ({
+            id:
+              saleUnit.id,
+
+            unitId:
+              saleUnit.unitId,
+
+            unitName:
+              saleUnit.unit.name,
+
+            quantityInBaseUnit:
+              saleUnit.quantityInBaseUnit,
+
+            sellingPrice:
+              Number(
+                saleUnit.sellingPrice,
+              ),
+
+            isDefault:
+              saleUnit.isDefault,
+
+            active:
+              saleUnit.active,
+
+            priceRules:
+              saleUnit.priceRules.map(
+                (rule) => ({
+                  id:
+                    rule.id,
+
+                  quantity:
+                    rule.quantity,
+
+                  price:
+                    Number(
+                      rule.price,
+                    ),
+
+                  active:
+                    rule.active,
+                }),
+              ),
+          }),
+        ),
     });
   } catch (error) {
-    console.error("PATCH /api/products/[id] error:", error);
+    console.error(
+      "PATCH /api/products/[id] error:",
+      error,
+    );
 
-    if (error instanceof DuplicateProductError) {
+    if (
+      error instanceof
+      DuplicateProductError
+    ) {
       return NextResponse.json(
         {
-          error: error.message,
-          code: error.product.active
-            ? "DUPLICATE_ACTIVE_PRODUCT"
-            : "DUPLICATE_ARCHIVED_PRODUCT",
+          error:
+            error.message,
+
+          code:
+            error.product.active
+              ? "DUPLICATE_ACTIVE_PRODUCT"
+              : "DUPLICATE_ARCHIVED_PRODUCT",
+
           existingProduct: {
-            id: error.product.id,
-            name: error.product.name,
-            active: error.product.active,
+            id:
+              error.product.id,
+
+            name:
+              error.product.name,
+
+            active:
+              error.product.active,
           },
         },
-        { status: 409 },
+        {
+          status: 409,
+        },
       );
     }
 
-    if (error instanceof ProductUnitConfigurationError) {
+    if (
+      error instanceof
+      ProductUnitConfigurationError
+    ) {
       return NextResponse.json(
         {
-          error: error.message,
-          code: "INVALID_PRODUCT_UNIT_CONFIGURATION",
+          error:
+            error.message,
+
+          code:
+            "INVALID_PRODUCT_UNIT_CONFIGURATION",
         },
-        { status: 400 },
+        {
+          status: 400,
+        },
       );
     }
 
-    if (error instanceof ProductPricingError) {
+    if (
+      error instanceof
+      ProductPricingError
+    ) {
       return NextResponse.json(
         {
-          error: error.message,
-          code: "INVALID_PRODUCT_PRICING",
-          warnings: error.warnings,
+          error:
+            error.message,
+
+          code:
+            "INVALID_PRODUCT_PRICING",
+
+          warnings:
+            error.warnings,
         },
-        { status: 400 },
+        {
+          status: 400,
+        },
       );
     }
 
-    if (error instanceof Error && error.message === "Product not found") {
+    if (
+      error instanceof Error &&
+      error.message ===
+        "Product not found"
+    ) {
       return NextResponse.json(
-        { error: "Product not found" },
-        { status: 404 },
+        {
+          error:
+            "Product not found",
+        },
+        {
+          status: 404,
+        },
       );
     }
 
     return NextResponse.json(
-      { error: "Failed to update product" },
-      { status: 500 },
+      {
+        error:
+          "Failed to update product",
+      },
+      {
+        status: 500,
+      },
     );
   }
 }
 
 /*
  * DELETE means ARCHIVE.
- * Both count stock and weight stock must be zero first.
+ *
+ * Both count stock and weight
+ * stock must be zero first.
  */
 export async function DELETE(
   _request: Request,
-  { params }: { params: Promise<{ id: string }> },
+  {
+    params,
+  }: {
+    params: Promise<{
+      id: string;
+    }>;
+  },
 ) {
   try {
     const { id } = await params;
 
-    const product = await prisma.product.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        name: true,
-        stock: true,
-        weightStockGrams: true,
-        active: true,
-      },
-    });
+    const product =
+      await prisma.product.findUnique(
+        {
+          where: {
+            id,
+          },
+
+          select: {
+            id: true,
+
+            name: true,
+
+            stock: true,
+
+            weightStockGrams:
+              true,
+
+            active: true,
+          },
+        },
+      );
 
     if (!product) {
       return NextResponse.json(
-        { error: "Product not found" },
-        { status: 404 },
+        {
+          error:
+            "Product not found",
+        },
+        {
+          status: 404,
+        },
       );
     }
 
     if (!product.active) {
-      return NextResponse.json({
-        success: true,
-        archived: true,
-      });
+      return NextResponse.json(
+        {
+          success: true,
+
+          archived: true,
+        },
+      );
     }
 
-    if (product.stock !== 0 || product.weightStockGrams !== 0) {
-      const parts: string[] = [];
+    if (
+      product.stock !== 0 ||
+      product.weightStockGrams !==
+        0
+    ) {
+      const parts: string[] =
+        [];
 
-      if (product.stock !== 0) {
-        parts.push(`${product.stock} count/base unit(s)`);
+      if (
+        product.stock !== 0
+      ) {
+        parts.push(
+          `${product.stock} count/base unit(s)`,
+        );
       }
 
-      if (product.weightStockGrams !== 0) {
-        parts.push(`${(product.weightStockGrams / 1000).toFixed(3)}kg weight stock`);
+      if (
+        product.weightStockGrams !==
+        0
+      ) {
+        parts.push(
+          `${(
+            product.weightStockGrams /
+            1000
+          ).toFixed(
+            3,
+          )}kg weight stock`,
+        );
       }
 
       return NextResponse.json(
         {
           error:
-            `"${product.name}" still has ${parts.join(" and ")}. ` +
+            `"${product.name}" still has ${parts.join(
+              " and ",
+            )}. ` +
             "Reduce, sell, or recount all stock to 0 before archiving it.",
-          code: "PRODUCT_HAS_STOCK",
+
+          code:
+            "PRODUCT_HAS_STOCK",
         },
-        { status: 409 },
+        {
+          status: 409,
+        },
       );
     }
 
-    await prisma.product.update({
-      where: { id },
-      data: { active: false },
-    });
+    await prisma.product.update(
+      {
+        where: {
+          id,
+        },
+
+        data: {
+          active: false,
+        },
+      },
+    );
 
     return NextResponse.json({
       success: true,
+
       archived: true,
     });
   } catch (error) {
-    console.error("DELETE /api/products/[id] error:", error);
+    console.error(
+      "DELETE /api/products/[id] error:",
+      error,
+    );
 
     return NextResponse.json(
-      { error: "Failed to archive product" },
-      { status: 500 },
+      {
+        error:
+          "Failed to archive product",
+      },
+      {
+        status: 500,
+      },
     );
   }
 }

@@ -39,6 +39,7 @@ type ProductPayload = {
   unitId: string;
   stock: number;
   lowStock: number;
+  currentCostPrice: number | null;
   active: boolean;
   saleUnits: ProductSaleUnitConfig[];
 };
@@ -55,6 +56,7 @@ type ProductApiResponse = {
   unitId: string;
   stock: number;
   lowStock: number;
+  currentCostPrice: number | null;
   active: boolean;
 
   saleUnits: Array<{
@@ -161,6 +163,8 @@ export default function EditProductForm({
 
       unitId: newBaseUnitId,
 
+      currentCostPrice: null,
+
       saleUnits: [
         createBaseSaleUnit(
           newBaseUnitId,
@@ -207,6 +211,23 @@ export default function EditProductForm({
         form.lowStock < 0
       ) {
         return "Low stock threshold must be 0 or more.";
+      }
+
+      if (
+        form.currentCostPrice != null &&
+        (!Number.isFinite(
+          form.currentCostPrice,
+        ) ||
+          form.currentCostPrice <= 0)
+      ) {
+        return "Cost price must be greater than zero.";
+      }
+
+      if (
+        form.stock > 0 &&
+        form.currentCostPrice == null
+      ) {
+        return "Cost price is required when stock is greater than zero.";
       }
 
       const unitError =
@@ -370,6 +391,13 @@ export default function EditProductForm({
           product.lowStock,
         ),
 
+        currentCostPrice:
+          product.currentCostPrice != null
+            ? Number(
+                product.currentCostPrice,
+              )
+            : null,
+
         active:
           product.active,
 
@@ -459,6 +487,9 @@ export default function EditProductForm({
 
             lowStock:
               form.lowStock,
+
+            currentCostPrice:
+              form.currentCostPrice,
 
             active:
               form.active,
@@ -765,6 +796,61 @@ export default function EditProductForm({
                         }
                         required
                       />
+                    </Field>
+
+                    <Field
+                      label={`Cost Price per ${
+                        units.find(
+                          (unit) =>
+                            unit.id ===
+                            form.unitId,
+                        )?.name ??
+                        "Base Unit"
+                      }`}
+                    >
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
+                        value={
+                          form.currentCostPrice ??
+                          ""
+                        }
+                        onChange={(e) =>
+                          updateField(
+                            "currentCostPrice",
+                            e.target.value ===
+                              ""
+                              ? null
+                              : Number(
+                                  e
+                                    .target
+                                    .value,
+                                ),
+                          )
+                        }
+                        placeholder="e.g. 888.57"
+                        required={
+                          form.stock > 0
+                        }
+                      />
+
+                      <p className="mt-2 text-xs leading-5 text-slate-500">
+                        Enter the real
+                        purchase cost of
+                        one{" "}
+                        {units.find(
+                          (unit) =>
+                            unit.id ===
+                            form.unitId,
+                        )?.name ??
+                          "base unit"}
+                        . This is used
+                        for profit and
+                        loss
+                        calculations.
+                      </p>
                     </Field>
                   </div>
                 </section>

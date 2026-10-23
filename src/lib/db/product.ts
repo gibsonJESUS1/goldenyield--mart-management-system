@@ -47,6 +47,10 @@ export type UpdateProductInput = {
   unitId: string;
   stock: number;
   lowStock: number;
+
+  // Cost of ONE base unit.
+  currentCostPrice?: number | null;
+
   active?: boolean;
 
   saleUnits: Array<{
@@ -452,24 +456,86 @@ export async function updateProduct(
         );
       }
 
-      /*
-       * Validate CURRENT selling prices
-       * against CURRENT cost price.
-       *
-       * Cost itself is not edited here.
-       */
-      const currentCostPrice =
-        existingProduct.currentCostPrice !=
-        null
+      const previousCostPrice =
+        existingProduct.currentCostPrice != null
           ? Number(
               existingProduct.currentCostPrice,
             )
           : null;
 
+      const baseUnitChanged =
+        existingProduct.unitId !== data.unitId;
+
+      const nextCostPrice =
+        data.currentCostPrice !== undefined
+          ? data.currentCostPrice
+          : previousCostPrice;
+
+      if (
+        nextCostPrice != null &&
+        (!Number.isFinite(nextCostPrice) ||
+          nextCostPrice <= 0)
+      ) {
+        throw new ProductPricingError(
+          "Cost price must be greater than zero.",
+        );
+      }
+
+      if (
+        data.stock > 0 &&
+        nextCostPrice == null
+      ) {
+        throw new ProductPricingError(
+          "Cost price is required when stock is greater than zero.",
+        );
+      }
+
+      /*
+       * Do not silently erase a valid cost price.
+       * The one safe exception is when the base unit
+       * itself changes while stock is zero, because the
+       * old cost no longer describes the new base unit.
+       */
+      if (
+        previousCostPrice != null &&
+        data.currentCostPrice === null &&
+        !baseUnitChanged
+      ) {
+        throw new ProductPricingError(
+          "Existing cost price cannot be cleared. Enter the new cost price instead.",
+        );
+      }
+
       assertSellingPricesNotBelowCost(
-        currentCostPrice,
+        nextCostPrice,
         data.saleUnits,
       );
+
+      /*
+       * Variable-piece selling uses currentCostPrice as
+       * the average cost of one whole/base piece. Keep
+       * its configured minimum selling price above cost.
+       */
+      if (
+        existingProduct.allowVariablePiecePrice &&
+        existingProduct.minPiecePrice != null &&
+        nextCostPrice != null &&
+        Number(existingProduct.minPiecePrice) <
+          nextCostPrice
+      ) {
+        throw new ProductPricingError(
+          `The new cost price ₦${nextCostPrice.toLocaleString()} is higher than the current minimum variable piece selling price of ₦${Number(
+            existingProduct.minPiecePrice,
+          ).toLocaleString()}. Update the Fish / Meat Selling minimum price first.`,
+        );
+      }
+
+      const costPriceChanged =
+        nextCostPrice != null &&
+        (previousCostPrice == null ||
+          Math.abs(
+            nextCostPrice - previousCostPrice,
+          ) > 0.001);
 
       /*
        * Changing the base unit changes what
@@ -544,9 +610,33 @@ export async function updateProduct(
           lowStock:
             data.lowStock,
 
+          currentCostPrice:
+            nextCostPrice,
+
           active:
             data.active ??
             true,
+
+          ...(costPriceChanged &&
+          nextCostPrice != null
+            ? {
+                costPriceHistories: {
+                  create: {
+                    oldCostPrice:
+                      previousCostPrice,
+
+                    newCostPrice:
+                      nextCostPrice,
+
+                    changeType:
+                      "MANUAL_UPDATE",
+
+                    note:
+                      "Cost price updated from product edit form",
+                  },
+                },
+              }
+            : {}),
         },
       });
 
