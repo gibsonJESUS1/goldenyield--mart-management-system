@@ -63,6 +63,25 @@ export async function GET() {
           ? Number(product.maxPiecePrice)
           : null,
 
+      piecePriceOptions: product.piecePriceOptions.map((option) => ({
+        id: option.id,
+        label: option.label,
+        sellingPrice: Number(option.sellingPrice),
+        costPrice: Number(option.costPrice),
+        active: option.active,
+        sortOrder: option.sortOrder,
+      })),
+
+      activeBatch: product.batches[0]
+        ? {
+            id: product.batches[0].id,
+            containerType: product.batches[0].containerType,
+            reference: product.batches[0].reference,
+            status: product.batches[0].status,
+            startedAt: product.batches[0].startedAt,
+          }
+        : null,
+
       createdAt: product.createdAt,
       updatedAt: product.updatedAt,
 
@@ -175,6 +194,9 @@ export async function POST(request: Request) {
 
         maxPiecePrice:
           product.maxPiecePrice != null ? Number(product.maxPiecePrice) : null,
+
+        piecePriceOptions: [],
+        activeBatch: null,
 
         createdAt: product.createdAt,
         updatedAt: product.updatedAt,

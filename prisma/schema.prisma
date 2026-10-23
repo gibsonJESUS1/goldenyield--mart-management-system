@@ -71,6 +71,56 @@ model Product {
   stockMovements      StockMovement[]
   purchaseItems       PurchaseItem[]
   costPriceHistories  ProductCostPriceHistory[]
+  piecePriceOptions    ProductPiecePriceOption[]
+  batches              ProductBatch[]
+}
+
+
+enum BatchInventoryStatus {
+  ACTIVE
+  LOW
+  FINISHED
+}
+
+model ProductBatch {
+  id            String               @id @default(cuid())
+  productId     String
+  containerType String
+  reference     String?
+  totalCost     Decimal              @db.Decimal(12, 2)
+  status        BatchInventoryStatus @default(ACTIVE)
+  note          String?
+  startedAt     DateTime             @default(now())
+  finishedAt    DateTime?
+  closedRevenue Decimal?             @db.Decimal(12, 2)
+  closedProfit  Decimal?             @db.Decimal(12, 2)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  product   Product    @relation(fields: [productId], references: [id], onDelete: Cascade)
+  saleItems SaleItem[]
+
+  @@index([productId])
+  @@index([status])
+  @@index([startedAt])
+}
+
+model ProductPiecePriceOption {
+  id           String   @id @default(cuid())
+  productId    String
+  label        String
+  sellingPrice Decimal  @db.Decimal(12, 2)
+  costPrice    Decimal  @db.Decimal(12, 2)
+  active       Boolean  @default(true)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, label])
+  @@index([productId])
+  @@index([active])
 }
 
 model ProductSaleUnitPriceRule {
@@ -118,6 +168,7 @@ enum SaleEntryMode {
   STANDARD
   WEIGHT_KG
   VARIABLE_PIECE
+  BATCH_AMOUNT
 }
 
 model Sale {
@@ -139,6 +190,7 @@ model SaleItem {
   saleId             String
   productId          String
   saleUnitId         String?
+  productBatchId     String?
   quantity           Int
   quantityInBaseUnit Int
   unitPrice          Decimal       @db.Decimal(12, 2)
@@ -149,14 +201,17 @@ model SaleItem {
   saleMode           SaleEntryMode @default(STANDARD)
   weightGrams        Int?
   manualUnitPrice    Decimal?      @db.Decimal(12, 2)
+  piecePriceLabel    String?
   createdAt          DateTime      @default(now())
 
   sale     Sale             @relation(fields: [saleId], references: [id], onDelete: Cascade)
   product  Product          @relation(fields: [productId], references: [id])
-  saleUnit ProductSaleUnit? @relation(fields: [saleUnitId], references: [id])
+  saleUnit     ProductSaleUnit? @relation(fields: [saleUnitId], references: [id])
+  productBatch ProductBatch?    @relation(fields: [productBatchId], references: [id], onDelete: SetNull)
 
   @@index([saleId])
   @@index([productId])
+  @@index([productBatchId])
   @@index([saleMode])
 }
 

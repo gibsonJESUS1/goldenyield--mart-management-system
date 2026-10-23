@@ -160,6 +160,28 @@ export async function getProducts() {
           createdAt: "asc",
         },
       },
+
+      piecePriceOptions: {
+        where: {
+          active: true,
+        },
+        orderBy: [
+          { sortOrder: "asc" },
+          { sellingPrice: "asc" },
+        ],
+      },
+
+      batches: {
+        where: {
+          status: {
+            in: ["ACTIVE", "LOW"],
+          },
+        },
+        orderBy: {
+          startedAt: "desc",
+        },
+        take: 1,
+      },
     },
 
     orderBy: {
@@ -199,6 +221,16 @@ export async function getProductById(
         orderBy: {
           createdAt: "asc",
         },
+      },
+
+      piecePriceOptions: {
+        where: {
+          active: true,
+        },
+        orderBy: [
+          { sortOrder: "asc" },
+          { sellingPrice: "asc" },
+        ],
       },
 
       stockMovements: {
@@ -447,6 +479,12 @@ export async function updateProduct(
                   true,
               },
             },
+
+            piecePriceOptions: {
+              where: {
+                active: true,
+              },
+            },
           },
         });
 
@@ -512,12 +550,14 @@ export async function updateProduct(
       );
 
       /*
-       * Variable-piece selling uses currentCostPrice as
-       * the average cost of one whole/base piece. Keep
-       * its configured minimum selling price above cost.
+       * Manual variable-piece selling uses currentCostPrice
+       * as the cost of one base piece. When configured
+       * piece-price options exist, each option has its own
+       * cost and this check does not apply.
        */
       if (
         existingProduct.allowVariablePiecePrice &&
+        existingProduct.piecePriceOptions.length === 0 &&
         existingProduct.minPiecePrice != null &&
         nextCostPrice != null &&
         Number(existingProduct.minPiecePrice) <
@@ -987,6 +1027,16 @@ export async function updateProduct(
                 createdAt:
                   "asc",
               },
+            },
+
+            piecePriceOptions: {
+              where: {
+                active: true,
+              },
+              orderBy: [
+                { sortOrder: "asc" },
+                { sellingPrice: "asc" },
+              ],
             },
           },
         },

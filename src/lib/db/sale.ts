@@ -9,7 +9,8 @@ type GetSalesFilters = {
 export type SaleInputMode =
   | "STANDARD"
   | "WEIGHT_KG"
-  | "VARIABLE_PIECE";
+  | "VARIABLE_PIECE"
+  | "BATCH_AMOUNT";
 
 type CreateSaleWithInventoryInput = {
   customerName?: string;
@@ -23,6 +24,8 @@ type CreateSaleWithInventoryInput = {
     quantity?: number;
     weightGrams?: number;
     manualUnitPrice?: number;
+    piecePriceOptionId?: string;
+    batchAmount?: number;
   }>;
 };
 
@@ -34,7 +37,8 @@ export type SaleProtectionCode =
   | "INSUFFICIENT_STOCK"
   | "PRICE_CHANGED"
   | "INVALID_PAYMENT"
-  | "INVALID_FLEXIBLE_SALE";
+  | "INVALID_FLEXIBLE_SALE"
+  | "INVALID_BATCH_SALE";
 
 export class SaleProtectionError extends Error {
   code: SaleProtectionCode;
@@ -134,6 +138,7 @@ export async function getSales(filters: GetSalesFilters = {}) {
               unit: true,
             },
           },
+          productBatch: true,
         },
       },
     },
@@ -177,6 +182,8 @@ export async function createSaleWithInventory(
         quantity: Number(item.quantity),
         weightGrams: undefined,
         manualUnitPrice: undefined,
+        piecePriceOptionId: undefined,
+        batchAmount: undefined,
       };
     }
 
@@ -198,6 +205,8 @@ export async function createSaleWithInventory(
         quantity: 1,
         weightGrams: Number(item.weightGrams),
         manualUnitPrice: undefined,
+        piecePriceOptionId: undefined,
+        batchAmount: undefined,
       };
     }
 
@@ -212,12 +221,25 @@ export async function createSaleWithInventory(
         );
       }
 
-      const manualUnitPrice = Number(item.manualUnitPrice);
+      const piecePriceOptionId =
+        typeof item.piecePriceOptionId === "string" &&
+        item.piecePriceOptionId.trim()
+          ? item.piecePriceOptionId.trim()
+          : undefined;
 
-      if (!Number.isFinite(manualUnitPrice) || manualUnitPrice <= 0) {
+      const manualUnitPrice =
+        item.manualUnitPrice != null
+          ? Number(item.manualUnitPrice)
+          : undefined;
+
+      if (
+        !piecePriceOptionId &&
+        (!Number.isFinite(Number(manualUnitPrice)) ||
+          Number(manualUnitPrice) <= 0)
+      ) {
         throw new SaleProtectionError(
           "INVALID_FLEXIBLE_SALE",
-          "Enter a valid price for the piece.",
+          "Select a configured portion price or enter a valid price for the piece.",
         );
       }
 
@@ -228,6 +250,30 @@ export async function createSaleWithInventory(
         quantity: Number(item.quantity),
         weightGrams: undefined,
         manualUnitPrice,
+        piecePriceOptionId,
+        batchAmount: undefined,
+      };
+    }
+
+    if (mode === "BATCH_AMOUNT") {
+      const batchAmount = Number(item.batchAmount);
+
+      if (!Number.isFinite(batchAmount) || batchAmount <= 0) {
+        throw new SaleProtectionError(
+          "INVALID_BATCH_SALE",
+          "Enter a valid sale amount greater than zero.",
+        );
+      }
+
+      return {
+        productId: item.productId,
+        mode,
+        productSaleUnitId: undefined,
+        quantity: 1,
+        weightGrams: undefined,
+        manualUnitPrice: undefined,
+        piecePriceOptionId: undefined,
+        batchAmount: roundMoney(batchAmount),
       };
     }
 
@@ -287,6 +333,42 @@ export async function createSaleWithInventory(
             allowVariablePiecePrice: true,
             minPiecePrice: true,
             maxPiecePrice: true,
+
+            piecePriceOptions: {
+              where: {
+                active: true,
+              },
+              select: {
+                id: true,
+                label: true,
+                sellingPrice: true,
+                costPrice: true,
+                active: true,
+                sortOrder: true,
+              },
+              orderBy: [
+                { sortOrder: "asc" },
+                { sellingPrice: "asc" },
+              ],
+            },
+
+            batches: {
+              where: {
+                status: {
+                  in: ["ACTIVE", "LOW"],
+                },
+              },
+              select: {
+                id: true,
+                containerType: true,
+                status: true,
+                startedAt: true,
+              },
+              orderBy: {
+                startedAt: "desc",
+              },
+              take: 1,
+            },
           },
         }),
 
@@ -373,6 +455,24 @@ export async function createSaleWithInventory(
               product.maxPiecePrice != null
                 ? Number(product.maxPiecePrice)
                 : null,
+
+            piecePriceOptions:
+              product.piecePriceOptions.map((option) => ({
+                id: option.id,
+                label: option.label,
+                sellingPrice: Number(option.sellingPrice),
+                costPrice: Number(option.costPrice),
+                active: option.active,
+                sortOrder: option.sortOrder,
+              })),
+
+            activeBatch: product.batches[0]
+              ? {
+                  id: product.batches[0].id,
+                  containerType: product.batches[0].containerType,
+                  status: product.batches[0].status,
+                }
+              : null,
           },
         ]),
       );
@@ -461,6 +561,9 @@ export async function createSaleWithInventory(
             weightConsumed: weightGrams,
             unitPrice: pricePerKg,
             manualUnitPrice: null as number | null,
+            piecePriceLabel: null as string | null,
+            productBatchId: null as string | null,
+            batchLabel: null as string | null,
             lineTotal,
             unitCostPrice: costPerKg,
             lineCostTotal,
@@ -476,20 +579,80 @@ export async function createSaleWithInventory(
             );
           }
 
-          const costPerPiece = positiveNumber(product.currentCostPrice);
+          const quantity = item.quantity;
 
-          if (costPerPiece == null) {
+          const configuredOption =
+            item.piecePriceOptionId
+              ? product.piecePriceOptions.find(
+                  (option) =>
+                    option.id ===
+                      item.piecePriceOptionId &&
+                    option.active,
+                )
+              : undefined;
+
+          if (
+            item.piecePriceOptionId &&
+            !configuredOption
+          ) {
             throw new SaleProtectionError(
-              "PRODUCT_COST_MISSING",
-              `${product.name} is not ready for a piece sale. Ask a manager to review the product cost.`,
+              "SELLING_UNIT_NOT_AVAILABLE",
+              `${product.name}: this portion price is no longer available. Refresh the sales page and try again.`,
             );
           }
 
-          const quantity = item.quantity;
-          const manualUnitPrice = item.manualUnitPrice!;
+          let sellingPrice: number;
+          let costPerPiece: number;
+          let manualUnitPrice: number | null;
+          let piecePriceLabel: string | null;
+
+          if (configuredOption) {
+            sellingPrice =
+              positiveNumber(
+                configuredOption.sellingPrice,
+              ) ?? 0;
+
+            costPerPiece =
+              positiveNumber(
+                configuredOption.costPrice,
+              ) ?? 0;
+
+            manualUnitPrice = null;
+            piecePriceLabel =
+              configuredOption.label;
+
+            if (
+              sellingPrice <= 0 ||
+              costPerPiece <= 0
+            ) {
+              throw new SaleProtectionError(
+                "INVALID_FLEXIBLE_SALE",
+                `${product.name}: the selected portion option has invalid pricing. Ask a manager to review it.`,
+              );
+            }
+          } else {
+            const fallbackCost =
+              positiveNumber(
+                product.currentCostPrice,
+              );
+
+            if (fallbackCost == null) {
+              throw new SaleProtectionError(
+                "PRODUCT_COST_MISSING",
+                `${product.name} is not ready for a manual piece sale. Ask a manager to review the product cost.`,
+              );
+            }
+
+            sellingPrice = Number(
+              item.manualUnitPrice,
+            );
+            costPerPiece = fallbackCost;
+            manualUnitPrice = sellingPrice;
+            piecePriceLabel = null;
+          }
 
           const lineTotal = roundMoney(
-            manualUnitPrice * quantity,
+            sellingPrice * quantity,
           );
 
           const lineCostTotal = roundMoney(
@@ -499,7 +662,7 @@ export async function createSaleWithInventory(
           if (lineTotal < lineCostTotal) {
             throw new SaleProtectionError(
               "SELLING_PRICE_BELOW_COST",
-              `${product.name}: this piece price is not allowed. Ask a manager to review the product price.`,
+              `${product.name}: this piece price is not allowed because it is below its configured cost.`,
             );
           }
 
@@ -514,12 +677,57 @@ export async function createSaleWithInventory(
             countConsumed: quantity,
             weightGrams: null as number | null,
             weightConsumed: 0,
-            unitPrice: manualUnitPrice,
+            unitPrice: sellingPrice,
             manualUnitPrice,
+            piecePriceLabel,
+            productBatchId: null as string | null,
+            batchLabel: null as string | null,
             lineTotal,
             unitCostPrice: costPerPiece,
             lineCostTotal,
             lineProfit: roundMoney(lineTotal - lineCostTotal),
+          };
+        }
+
+        if (item.mode === "BATCH_AMOUNT") {
+          const activeBatch = product.activeBatch;
+
+          if (!activeBatch) {
+            throw new SaleProtectionError(
+              "INVALID_BATCH_SALE",
+              `${product.name}: there is no active batch/container. Start a new batch from the product setup first.`,
+            );
+          }
+
+          const batchAmount = roundMoney(Number(item.batchAmount));
+
+          if (!Number.isFinite(batchAmount) || batchAmount <= 0) {
+            throw new SaleProtectionError(
+              "INVALID_BATCH_SALE",
+              `${product.name}: enter a valid batch sale amount.`,
+            );
+          }
+
+          return {
+            productId: product.id,
+            productName: product.name,
+            productSaleUnitId: null as string | null,
+            unitName: "Amount",
+            saleMode: "BATCH_AMOUNT" as const,
+            quantity: 1,
+            baseUnitsConsumed: 0,
+            countConsumed: 0,
+            weightGrams: null as number | null,
+            weightConsumed: 0,
+            unitPrice: batchAmount,
+            manualUnitPrice: null as number | null,
+            piecePriceLabel: null as string | null,
+            productBatchId: activeBatch.id,
+            batchLabel: activeBatch.containerType,
+            lineTotal: batchAmount,
+            unitCostPrice: null as number | null,
+            lineCostTotal: null as number | null,
+            lineProfit: null as number | null,
           };
         }
 
@@ -580,6 +788,9 @@ export async function createSaleWithInventory(
           weightConsumed: 0,
           unitPrice: saleUnit.sellingPrice,
           manualUnitPrice: null as number | null,
+          piecePriceLabel: null as string | null,
+          productBatchId: null as string | null,
+          batchLabel: null as string | null,
           lineTotal,
           unitCostPrice: costPerBaseUnit,
           lineCostTotal,
@@ -675,19 +886,31 @@ export async function createSaleWithInventory(
             create: preparedItems.map((item) => ({
               productId: item.productId,
               saleUnitId: item.productSaleUnitId,
+              productBatchId: item.productBatchId,
               quantity: item.quantity,
               quantityInBaseUnit: item.baseUnitsConsumed,
               unitPrice: toDecimal(item.unitPrice),
               lineTotal: toDecimal(item.lineTotal),
-              unitCostPrice: toDecimal(item.unitCostPrice),
-              lineCostTotal: toDecimal(item.lineCostTotal),
-              lineProfit: toDecimal(item.lineProfit),
+              unitCostPrice:
+                item.unitCostPrice != null
+                  ? toDecimal(item.unitCostPrice)
+                  : null,
+              lineCostTotal:
+                item.lineCostTotal != null
+                  ? toDecimal(item.lineCostTotal)
+                  : null,
+              lineProfit:
+                item.lineProfit != null
+                  ? toDecimal(item.lineProfit)
+                  : null,
               saleMode: item.saleMode,
               weightGrams: item.weightGrams,
               manualUnitPrice:
                 item.manualUnitPrice != null
                   ? toDecimal(item.manualUnitPrice)
                   : null,
+              piecePriceLabel:
+                item.piecePriceLabel,
             })),
           },
         },
@@ -705,6 +928,7 @@ export async function createSaleWithInventory(
                   unit: true,
                 },
               },
+              productBatch: true,
             },
           },
         },

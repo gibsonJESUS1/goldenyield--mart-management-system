@@ -10,7 +10,7 @@ import {
 import SummaryCard from "@/components/shared/summary-card";
 
 type PaymentStatus = "paid" | "partial" | "owed";
-type SaleMode = "STANDARD" | "WEIGHT_KG" | "VARIABLE_PIECE";
+type SaleMode = "STANDARD" | "WEIGHT_KG" | "VARIABLE_PIECE" | "BATCH_AMOUNT";
 
 type ProductSaleUnitPriceRule = {
   id: string;
@@ -28,6 +28,24 @@ type ProductSaleUnit = {
   isDefault: boolean;
   active: boolean;
   priceRules?: ProductSaleUnitPriceRule[];
+};
+
+type ProductPiecePriceOption = {
+  id: string;
+  label: string;
+  sellingPrice: number;
+  costPrice: number;
+  active: boolean;
+  sortOrder: number;
+};
+
+
+type ProductActiveBatch = {
+  id: string;
+  containerType: string;
+  reference: string | null;
+  status: "ACTIVE" | "LOW";
+  startedAt: string;
 };
 
 type SaleProduct = {
@@ -56,6 +74,8 @@ type SaleProduct = {
   allowVariablePiecePrice: boolean;
   minPiecePrice: number | null;
   maxPiecePrice: number | null;
+  piecePriceOptions: ProductPiecePriceOption[];
+  activeBatch: ProductActiveBatch | null;
 
   saleUnits: ProductSaleUnit[];
 };
@@ -82,6 +102,10 @@ type CartItem = {
 
   weightGrams?: number;
   manualUnitPrice?: number;
+  piecePriceOptionId?: string;
+  piecePriceLabel?: string;
+  batchAmount?: number;
+  batchLabel?: string;
 
   priceRules?: ProductSaleUnitPriceRule[];
 };
@@ -96,6 +120,8 @@ type SaleRecordItem = {
   unitPrice: number;
   total: number;
   weightGrams?: number | null;
+  piecePriceLabel?: string | null;
+  batchLabel?: string | null;
 };
 
 type SaleRecord = {
@@ -185,6 +211,11 @@ export default function SalesPage() {
 
   const [pieceQuantity, setPieceQuantity] = useState("1");
   const [piecePrice, setPiecePrice] = useState("");
+  const [batchAmount, setBatchAmount] = useState("");
+  const [
+    selectedPiecePriceOptionId,
+    setSelectedPiecePriceOptionId,
+  ] = useState("");
 
   const [customerName, setCustomerName] = useState("");
   const [paymentStatus, setPaymentStatus] =
@@ -230,6 +261,8 @@ export default function SalesPage() {
           total?: number;
           lineTotal?: number;
           weightGrams?: number | null;
+          piecePriceLabel?: string | null;
+          batchLabel?: string | null;
         }>;
       }>;
 
@@ -253,6 +286,8 @@ export default function SalesPage() {
             unitPrice: Number(item.unitPrice),
             total: Number(item.total ?? item.lineTotal ?? 0),
             weightGrams: item.weightGrams,
+            piecePriceLabel: item.piecePriceLabel ?? null,
+            batchLabel: item.batchLabel ?? null,
           })),
         })),
       );
@@ -326,6 +361,10 @@ export default function SalesPage() {
       return [];
     }
 
+    if (selectedProduct.activeBatch) {
+      return [];
+    }
+
     return selectedProduct.saleUnits.filter((saleUnit) => {
       if (!saleUnit.active) {
         return false;
@@ -358,6 +397,8 @@ export default function SalesPage() {
     setWeightKg("");
     setPieceQuantity("1");
     setPiecePrice("");
+    setBatchAmount("");
+    setSelectedPiecePriceOptionId("");
 
     if (!selectedProduct) {
       setSelectedSaleUnitId("");
@@ -610,15 +651,9 @@ export default function SalesPage() {
     }
 
     const parsedQty = Number(pieceQuantity);
-    const parsedPrice = Number(piecePrice);
 
     if (!Number.isInteger(parsedQty) || parsedQty <= 0) {
       alert("Enter a valid whole-number piece quantity.");
-      return;
-    }
-
-    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
-      alert("Enter the price for one piece.");
       return;
     }
 
@@ -632,7 +667,54 @@ export default function SalesPage() {
       alert(
         `Not enough piece stock. Available is ${selectedProduct.stock} ${selectedProduct.unit}.`,
       );
+      return;
+    }
 
+    const activeOptions =
+      (selectedProduct.piecePriceOptions ?? []).filter(
+        (option) => option.active,
+      );
+
+    if (activeOptions.length > 0) {
+      const option = activeOptions.find(
+        (candidate) =>
+          candidate.id === selectedPiecePriceOptionId,
+      );
+
+      if (!option) {
+        alert("Select the portion size / price.");
+        return;
+      }
+
+      setCartItems((previous) => [
+        ...previous,
+        {
+          key: createCartKey("piece-option"),
+          productId: selectedProduct.id,
+          productName: selectedProduct.name,
+          ownerName: selectedProduct.ownerName,
+          mode: "VARIABLE_PIECE",
+          saleUnitName: "Piece",
+          quantityInBaseUnit: 1,
+          unitPrice: Number(option.sellingPrice),
+          quantity: parsedQty,
+          total:
+            parsedQty * Number(option.sellingPrice),
+          baseUnitsConsumed: parsedQty,
+          piecePriceOptionId: option.id,
+          piecePriceLabel: option.label,
+        },
+      ]);
+
+      setPieceQuantity("1");
+      setSelectedPiecePriceOptionId("");
+      return;
+    }
+
+    const parsedPrice = Number(piecePrice);
+
+    if (!Number.isFinite(parsedPrice) || parsedPrice <= 0) {
+      alert("Enter the price for one piece.");
       return;
     }
 
@@ -680,6 +762,48 @@ export default function SalesPage() {
     setPiecePrice("");
   }
 
+  function addBatchAmountItem(quickAmount?: number) {
+    const activeBatch = selectedProduct?.activeBatch;
+
+    if (!selectedProduct || !activeBatch) {
+      return;
+    }
+
+    const amount =
+      quickAmount != null
+        ? Number(quickAmount)
+        : Number(batchAmount);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert("Enter a valid sale amount.");
+      return;
+    }
+
+    const roundedAmount =
+      Math.round((amount + Number.EPSILON) * 100) / 100;
+
+    setCartItems((previous) => [
+      ...previous,
+      {
+        key: createCartKey("batch"),
+        productId: selectedProduct.id,
+        productName: selectedProduct.name,
+        ownerName: selectedProduct.ownerName,
+        mode: "BATCH_AMOUNT",
+        saleUnitName: "Amount",
+        quantityInBaseUnit: 0,
+        unitPrice: roundedAmount,
+        quantity: 1,
+        total: roundedAmount,
+        baseUnitsConsumed: 0,
+        batchAmount: roundedAmount,
+        batchLabel: activeBatch.containerType,
+      },
+    ]);
+
+    setBatchAmount("");
+  }
+
   function removeItem(key: string) {
     setCartItems((previous) =>
       previous.filter((item) => item.key !== key),
@@ -695,7 +819,8 @@ export default function SalesPage() {
 
     if (
       !existingItem ||
-      existingItem.mode === "WEIGHT_KG"
+      existingItem.mode === "WEIGHT_KG" ||
+      existingItem.mode === "BATCH_AMOUNT"
     ) {
       return;
     }
@@ -808,6 +933,16 @@ export default function SalesPage() {
               quantity: item.quantity,
               manualUnitPrice:
                 item.manualUnitPrice,
+              piecePriceOptionId:
+                item.piecePriceOptionId,
+            };
+          }
+
+          if (item.mode === "BATCH_AMOUNT") {
+            return {
+              productId: item.productId,
+              mode: "BATCH_AMOUNT" as const,
+              batchAmount: item.batchAmount ?? item.total,
             };
           }
 
@@ -848,6 +983,8 @@ export default function SalesPage() {
       setWeightKg("");
       setPieceQuantity("1");
       setPiecePrice("");
+      setBatchAmount("");
+      setSelectedPiecePriceOptionId("");
       setSearch("");
 
       await Promise.all([
@@ -855,7 +992,7 @@ export default function SalesPage() {
         loadSales(),
       ]);
 
-      alert("Sale saved and stock updated.");
+      alert("Sale saved successfully.");
     } catch (error) {
       console.error(error);
 
@@ -908,7 +1045,7 @@ export default function SalesPage() {
           </h1>
 
           <p className="mt-1 text-sm text-slate-500">
-            Sell standard products, weighed fish/meat, or whole pieces priced by size.
+            Sell standard products, weighed products, size-priced pieces, or batch/container goods such as pepper and tomatoes.
           </p>
         </div>
 
@@ -992,11 +1129,13 @@ export default function SalesPage() {
                     value={product.id}
                   >
                     {product.name} — count {product.stock} {product.unit}
-                    {product.weightTrackingEnabled
-                      ? ` — weight ${kgFromGrams(
-                          product.weightStockGrams,
-                        )}kg`
-                      : ""}
+                    {product.activeBatch
+                      ? ` — ${product.activeBatch.containerType} batch ${product.activeBatch.status.toLowerCase()}`
+                      : product.weightTrackingEnabled
+                        ? ` — weight ${kgFromGrams(
+                            product.weightStockGrams,
+                          )}kg`
+                        : ""}
                   </option>
                 ))}
               </select>
@@ -1013,7 +1152,14 @@ export default function SalesPage() {
                       </span>
                     </p>
 
-                    {selectedProduct.weightTrackingEnabled ? (
+                    {selectedProduct.activeBatch ? (
+                      <p>
+                        Batch stock:{" "}
+                        <span className="font-semibold text-slate-900">
+                          {selectedProduct.activeBatch.containerType} — {selectedProduct.activeBatch.status}
+                        </span>
+                      </p>
+                    ) : selectedProduct.weightTrackingEnabled ? (
                       <p>
                         Weight stock:{" "}
                         <span className="font-semibold text-slate-900">
@@ -1025,6 +1171,52 @@ export default function SalesPage() {
                     ) : null}
                   </div>
                 </div>
+
+                {selectedProduct.activeBatch ? (
+                  <SellingMethodCard
+                    title={`Sell from ${selectedProduct.activeBatch.containerType} Batch`}
+                    description="Use this for pepper, tomatoes, onions and similar produce bought as a basket/crate/bag where exact count or weight is not reliable."
+                  >
+                    <div className="grid grid-cols-3 gap-2">
+                      {[200, 300, 500].map((amount) => (
+                        <button
+                          key={amount}
+                          type="button"
+                          onClick={() => addBatchAmountItem(amount)}
+                          className="rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-3 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
+                        >
+                          {money(amount)}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+                      <Field label="Other amount">
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={batchAmount}
+                          onChange={(event) => setBatchAmount(event.target.value)}
+                          placeholder="e.g. 700"
+                          className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
+                        />
+                      </Field>
+
+                      <button
+                        type="button"
+                        onClick={() => addBatchAmountItem()}
+                        className="rounded-xl bg-emerald-600 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-700"
+                      >
+                        Add Amount Sale
+                      </button>
+                    </div>
+
+                    <p className="mt-3 text-xs leading-5 text-slate-500">
+                      No fake kilogram or piece quantity is deducted. Profit is finalized when this batch is closed.
+                    </p>
+                  </SellingMethodCard>
+                ) : null}
 
                 {availableSaleUnits.length > 0 ? (
                   <SellingMethodCard
@@ -1083,7 +1275,7 @@ export default function SalesPage() {
                   </SellingMethodCard>
                 ) : null}
 
-                {selectedProduct.weightTrackingEnabled ? (
+                {selectedProduct.weightTrackingEnabled && !selectedProduct.activeBatch ? (
                   <SellingMethodCard
                     title={`Sell by Weight — ${money(
                       Number(selectedProduct.pricePerKg ?? 0),
@@ -1124,13 +1316,21 @@ export default function SalesPage() {
                   </SellingMethodCard>
                 ) : null}
 
-                {selectedProduct.allowVariablePiecePrice ? (
+                {selectedProduct.allowVariablePiecePrice && !selectedProduct.activeBatch ? (
                   <SellingMethodCard
-                    title="Sell Whole Piece by Size"
-                    description="No weighing. Look at the size and enter the actual price you are charging for one piece."
+                    title={
+                      selectedProduct.piecePriceOptions.length > 0
+                        ? "Sell Piece / Portion by Size"
+                        : "Sell Whole Piece by Size"
+                    }
+                    description={
+                      selectedProduct.piecePriceOptions.length > 0
+                        ? "Choose the configured portion. Each option has its own hidden cost price for accurate profit calculation."
+                        : "No weighing. Look at the size and enter the actual price you are charging for one piece."
+                    }
                   >
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <Field label="Number of pieces">
+                      <Field label="Number of pieces / portions">
                         <input
                           type="number"
                           min="1"
@@ -1143,34 +1343,67 @@ export default function SalesPage() {
                         />
                       </Field>
 
-                      <Field label="Price for one piece">
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={piecePrice}
-                          onChange={(event) =>
-                            setPiecePrice(event.target.value)
-                          }
-                          placeholder={
-                            selectedProduct.minPiecePrice != null &&
-                            selectedProduct.maxPiecePrice != null
-                              ? `${selectedProduct.minPiecePrice} - ${selectedProduct.maxPiecePrice}`
-                              : "Enter piece price"
-                          }
-                          className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
-                        />
-                      </Field>
+                      {selectedProduct.piecePriceOptions.length > 0 ? (
+                        <Field label="Size / Portion Price">
+                          <select
+                            value={selectedPiecePriceOptionId}
+                            onChange={(event) =>
+                              setSelectedPiecePriceOptionId(
+                                event.target.value,
+                              )
+                            }
+                            className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-emerald-500"
+                          >
+                            <option value="">
+                              Select portion
+                            </option>
+
+                            {selectedProduct.piecePriceOptions
+                              .filter((option) => option.active)
+                              .map((option) => (
+                                <option
+                                  key={option.id}
+                                  value={option.id}
+                                >
+                                  {option.label} — {money(
+                                    option.sellingPrice,
+                                  )}
+                                </option>
+                              ))}
+                          </select>
+                        </Field>
+                      ) : (
+                        <Field label="Price for one piece">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={piecePrice}
+                            onChange={(event) =>
+                              setPiecePrice(event.target.value)
+                            }
+                            placeholder={
+                              selectedProduct.minPiecePrice != null &&
+                              selectedProduct.maxPiecePrice != null
+                                ? `${selectedProduct.minPiecePrice} - ${selectedProduct.maxPiecePrice}`
+                                : "Enter piece price"
+                            }
+                            className="w-full rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-emerald-500"
+                          />
+                        </Field>
+                      )}
                     </div>
 
-                    {selectedProduct.minPiecePrice != null &&
+                    {selectedProduct.piecePriceOptions.length === 0 &&
+                    selectedProduct.minPiecePrice != null &&
                     selectedProduct.maxPiecePrice != null ? (
                       <p className="mt-3 text-xs leading-5 text-slate-500">
-                        Normal guide:{" "}
-                        {money(selectedProduct.minPiecePrice)}
-                        {" – "}
-                        {money(selectedProduct.maxPiecePrice)}
-                        {" "}per piece. Another legitimate price can still be used for an unusually small or large piece.
+                        Normal guide: {money(
+                          selectedProduct.minPiecePrice,
+                        )}{" – "}{money(
+                          selectedProduct.maxPiecePrice,
+                        )}{" "}
+                        per piece. Another legitimate price can still be used for an unusually small or large piece.
                       </p>
                     ) : null}
 
@@ -1179,7 +1412,7 @@ export default function SalesPage() {
                       onClick={addVariablePieceItem}
                       className="mt-4 w-full rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white hover:bg-violet-700"
                     >
-                      Add Piece Sale
+                      Add Piece / Portion Sale
                     </button>
                   </SellingMethodCard>
                 ) : null}
@@ -1225,19 +1458,27 @@ export default function SalesPage() {
                                 ).toLocaleString()} kg @ ${money(
                                   item.unitPrice,
                                 )}/kg`
-                              : item.mode === "VARIABLE_PIECE"
-                                ? `${item.quantity} piece(s) @ ${money(
-                                    item.unitPrice,
-                                  )} each`
-                                : `${item.quantity} ${item.saleUnitName}`}
+                              : item.mode === "BATCH_AMOUNT"
+                                ? `${item.batchLabel ?? "Batch"} amount sale — ${money(item.total)}`
+                                : item.mode === "VARIABLE_PIECE"
+                                  ? `${item.quantity} piece(s)${
+                                      item.piecePriceLabel
+                                        ? ` (${item.piecePriceLabel})`
+                                        : ""
+                                    } @ ${money(
+                                      item.unitPrice,
+                                    )} each`
+                                  : `${item.quantity} ${item.saleUnitName}`}
                           </p>
 
                           <p className="mt-1 text-xs font-medium uppercase tracking-wide text-slate-400">
                             {item.mode === "WEIGHT_KG"
                               ? "Weight sale"
-                              : item.mode === "VARIABLE_PIECE"
-                                ? "Size-priced piece"
-                                : "Standard sale"}
+                              : item.mode === "BATCH_AMOUNT"
+                                ? "Batch/container sale"
+                                : item.mode === "VARIABLE_PIECE"
+                                  ? "Size-priced piece"
+                                  : "Standard sale"}
                           </p>
                         </div>
 
@@ -1251,7 +1492,7 @@ export default function SalesPage() {
                       </div>
 
                       <div className="mt-3 flex items-center justify-between gap-3">
-                        {item.mode !== "WEIGHT_KG" ? (
+                        {item.mode === "STANDARD" || item.mode === "VARIABLE_PIECE" ? (
                           <div className="flex items-center gap-2">
                             <button
                               type="button"
@@ -1285,7 +1526,9 @@ export default function SalesPage() {
                           </div>
                         ) : (
                           <span className="text-sm text-slate-500">
-                            Exact weighed quantity
+                            {item.mode === "BATCH_AMOUNT"
+                              ? "Fixed amount sale"
+                              : "Exact weighed quantity"}
                           </span>
                         )}
 
@@ -1450,7 +1693,12 @@ export default function SalesPage() {
                         ? `${kgFromGrams(
                             Number(item.weightGrams ?? 0),
                           ).toLocaleString()}kg`
-                        : `× ${item.quantity} ${item.saleUnitName}`}
+                        : item.saleMode === "BATCH_AMOUNT"
+                          ? `${item.batchLabel ?? "Batch"} amount`
+                          : item.saleMode === "VARIABLE_PIECE" &&
+                              item.piecePriceLabel
+                            ? `× ${item.quantity} ${item.piecePriceLabel}`
+                            : `× ${item.quantity} ${item.saleUnitName}`}
                       {" • "}
                       {money(item.total)}
                     </span>

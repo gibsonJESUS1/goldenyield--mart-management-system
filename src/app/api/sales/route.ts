@@ -72,6 +72,8 @@ type SalesRequestItem = {
   quantity?: number;
   weightGrams?: number;
   manualUnitPrice?: number;
+  piecePriceOptionId?: string;
+  batchAmount?: number;
 
   // Legacy client fields: accepted but never trusted.
   unitPrice?: number;
@@ -91,7 +93,8 @@ function isValidMode(value: unknown): value is SaleInputMode {
   return (
     value === "STANDARD" ||
     value === "WEIGHT_KG" ||
-    value === "VARIABLE_PIECE"
+    value === "VARIABLE_PIECE" ||
+    value === "BATCH_AMOUNT"
   );
 }
 
@@ -125,11 +128,25 @@ function isValidSalesRequestItem(
   }
 
   if (mode === "VARIABLE_PIECE") {
+    const hasConfiguredOption =
+      typeof candidate.piecePriceOptionId === "string" &&
+      candidate.piecePriceOptionId.trim().length > 0;
+
+    const hasManualPrice =
+      Number.isFinite(Number(candidate.manualUnitPrice)) &&
+      Number(candidate.manualUnitPrice) > 0;
+
     return (
       Number.isInteger(Number(candidate.quantity)) &&
       Number(candidate.quantity) > 0 &&
-      Number.isFinite(Number(candidate.manualUnitPrice)) &&
-      Number(candidate.manualUnitPrice) > 0
+      (hasConfiguredOption || hasManualPrice)
+    );
+  }
+
+  if (mode === "BATCH_AMOUNT") {
+    return (
+      Number.isFinite(Number(candidate.batchAmount)) &&
+      Number(candidate.batchAmount) > 0
     );
   }
 
@@ -174,7 +191,9 @@ function normalizeSale(sale: SaleWithDetails) {
           ? "Kg"
           : item.saleMode === "VARIABLE_PIECE"
             ? "Piece"
-            : item.saleUnit?.unit?.name ?? "Base unit";
+            : item.saleMode === "BATCH_AMOUNT"
+              ? "Amount"
+              : item.saleUnit?.unit?.name ?? "Base unit";
 
       return {
         id: item.id,
@@ -202,6 +221,12 @@ function normalizeSale(sale: SaleWithDetails) {
           item.manualUnitPrice != null
             ? Number(item.manualUnitPrice)
             : null,
+
+        piecePriceLabel:
+          item.piecePriceLabel,
+
+        batchLabel:
+          item.productBatch?.containerType ?? null,
 
         unitPrice:
           Number(item.unitPrice),
@@ -351,6 +376,14 @@ export async function POST(request: Request) {
             manualUnitPrice:
               item.manualUnitPrice != null
                 ? Number(item.manualUnitPrice)
+                : undefined,
+
+            piecePriceOptionId:
+              item.piecePriceOptionId,
+
+            batchAmount:
+              item.batchAmount != null
+                ? Number(item.batchAmount)
                 : undefined,
           })),
       });
