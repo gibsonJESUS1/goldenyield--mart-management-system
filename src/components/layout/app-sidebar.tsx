@@ -20,6 +20,8 @@ const links: NavLink[] = [
   { name: "Sales History", href: "/sales/history" },
   { name: "Debts", href: "/debts" },
   { name: "Purchases", href: "/purchases" },
+  { name: "Expenses", href: "/expenses" },
+  { name: "Profit Analytics", href: "/analytics" },
   { name: "Reports", href: "/reports" },
 ];
 

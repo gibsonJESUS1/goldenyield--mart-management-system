@@ -71,10 +71,10 @@ model Product {
   stockMovements      StockMovement[]
   purchaseItems       PurchaseItem[]
   costPriceHistories  ProductCostPriceHistory[]
-  piecePriceOptions    ProductPiecePriceOption[]
-  batches              ProductBatch[]
+  piecePriceOptions   ProductPiecePriceOption[]
+  batches             ProductBatch[]
+  expenses            Expense[]
 }
-
 
 enum BatchInventoryStatus {
   ACTIVE
@@ -204,8 +204,8 @@ model SaleItem {
   piecePriceLabel    String?
   createdAt          DateTime      @default(now())
 
-  sale     Sale             @relation(fields: [saleId], references: [id], onDelete: Cascade)
-  product  Product          @relation(fields: [productId], references: [id])
+  sale         Sale             @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  product      Product          @relation(fields: [productId], references: [id])
   saleUnit     ProductSaleUnit? @relation(fields: [saleUnitId], references: [id])
   productBatch ProductBatch?    @relation(fields: [productBatchId], references: [id], onDelete: SetNull)
 
@@ -327,4 +327,22 @@ model ProductCostPriceHistory {
   @@index([productId])
   @@index([changeType])
   @@index([createdAt])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  description String
+  category    String
+  amount      Decimal  @db.Decimal(12, 2)
+  spentAt     DateTime @default(now())
+  productId   String?
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  product Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([spentAt])
+  @@index([productId])
+  @@index([category])
 }
